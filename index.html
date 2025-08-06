@@ -3,14 +3,840 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Web App</title>
-    <link rel="stylesheet" href="style.css">
+    <title>DOI Landman Calculator</title>
+    <!-- 1. Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Load React and ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- 3. Load Babel to translate JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Load SheetJS for Excel export -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
+    <!-- This is where our React app will be rendered -->
+    <div id="root"></div>
 
-    <h1>My Awesome Web App</h1>
-    <canvas id="myCanvas"></canvas>
+    <!-- 4. Our React application code, now inside a special script tag -->
+    <script type="text/babel">
+        // Note: All 'import' and 'export' statements have been removed.
+        // React and its hooks are available via the global 'React' object.
+        // Icons from lucide-react have been replaced with text for simplicity.
 
-    <script type="module" src="script.js"></script>
+        // --- Helper Functions ---
+        const formatInterest = (num, places = 8) => {
+            const parsedNum = parseFloat(num);
+            if (isNaN(parsedNum)) {
+                return (0).toFixed(places);
+            }
+            return parsedNum.toFixed(places);
+        };
+
+        const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // --- Initial State & Data Structures ---
+        const createNewOwner = () => ({
+            id: generateId(),
+            name: 'New Owner',
+            interestType: 'WI',
+            interest: 1.0,
+            mineralInterest: 1.0,
+            burdenGroup: 'Lease A',
+        });
+
+        const createNewProject = () => ({
+            id: generateId(),
+            projectName: 'New DOI Project',
+            unitAcresOverride: null,
+            tracts: [{
+                id: generateId(),
+                name: 'Tract 1',
+                grossAcres: 640,
+                isExpanded: true,
+                owners: [
+                    { id: generateId(), name: 'WI Owner', interestType: 'WI', interest: 1.0, mineralInterest: 0.5, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'Royalty Owner', interestType: 'RI', interest: 0.25, mineralInterest: 0.5, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'ORRI Owner', interestType: 'ORRI', interest: 0.01, mineralInterest: 1.0, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'NPRI Owner', interestType: 'NPRI', interest: 0.05, mineralInterest: 0, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'Unleased Owner', interestType: 'Unleased', interest: 1.0, mineralInterest: 0.5, burdenGroup: '' },
+                ],
+            }],
+        });
+
+
+        // --- Main App Component ---
+        const App = () => {
+            // --- State Management ---
+            const [activeProjectId, setActiveProjectId] = React.useState(null);
+            const [projects, setProjects] = React.useState({});
+            const [isProjectsModalOpen, setIsProjectsModalOpen] = React.useState(false);
+            const [pasteModalInfo, setPasteModalInfo] = React.useState({ isOpen: false, tractId: null });
+            const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
+
+
+            // Derived state for the active project
+            const activeProject = projects[activeProjectId] || null;
+            const setProjectState = (updater) => {
+                if (!activeProjectId) return;
+                setProjects(prev => ({
+                    ...prev,
+                    [activeProjectId]: updater(prev[activeProjectId])
+                }));
+            };
+            
+            // --- Load projects from localStorage on initial render ---
+            React.useEffect(() => {
+                try {
+                    const savedProjects = localStorage.getItem('landmanDoiProjects');
+                    const parsedProjects = savedProjects ? JSON.parse(savedProjects) : {};
+                    
+                    const lastActiveId = localStorage.getItem('landmanDoiLastActive');
+
+                    if (Object.keys(parsedProjects).length > 0) {
+                        setProjects(parsedProjects);
+                        if (lastActiveId && parsedProjects[lastActiveId]) {
+                            setActiveProjectId(lastActiveId);
+                        } else {
+                            setActiveProjectId(Object.keys(parsedProjects)[0]);
+                        }
+                    } else {
+                        // If no projects, create a new one
+                        const newProject = createNewProject();
+                        setProjects({ [newProject.id]: newProject });
+                        setActiveProjectId(newProject.id);
+                    }
+                } catch (error) {
+                    console.error("Failed to load projects from localStorage", error);
+                    const newProject = createNewProject();
+                    setProjects({ [newProject.id]: newProject });
+                    setActiveProjectId(newProject.id);
+                }
+            }, []);
+
+            // --- Save projects to localStorage whenever they change ---
+            React.useEffect(() => {
+                if (Object.keys(projects).length > 0) {
+                    localStorage.setItem('landmanDoiProjects', JSON.stringify(projects));
+                }
+                if (activeProjectId) {
+                    localStorage.setItem('landmanDoiLastActive', activeProjectId);
+                }
+            }, [projects, activeProjectId]);
+
+
+            // --- Core Calculation Logic ---
+            const calculatedData = React.useMemo(() => {
+                const defaultReturn = {
+                    tracts: [],
+                    totals: {
+                        unitAcres: 0,
+                        unitNRI: '0.00000000',
+                        isBalanced: false,
+                        isWIBalanced: false,
+                        summary: { totalWI: '0.00000000', totalNRI: '0.00000000', nriFromWI: '0.00000000', nriFromRI: '0.00000000', nriFromORRI: '0.00000000', nriFromNPRI: '0.00000000' }
+                    },
+                    ownerTotals: []
+                };
+
+                if (!activeProject) return defaultReturn;
+
+                const { tracts, unitAcresOverride } = activeProject;
+                const autoCalculatedUnitAcres = tracts.reduce((sum, tract) => {
+                    const acres = parseFloat(tract.grossAcres);
+                    return sum + (isNaN(acres) ? 0 : acres);
+                }, 0);
+                const unitAcresNum = unitAcresOverride !== null ? (parseFloat(unitAcresOverride) || 0) : autoCalculatedUnitAcres;
+
+                if (unitAcresNum === 0 && tracts.length > 0) {
+                     return {
+                         ...defaultReturn,
+                         tracts: tracts.map(t => ({...t, owners: t.owners.map(o => ({...o, calculated: {tractNRI: '0.00000000', unitNRI: '0.00000000', tractWI: '0.00000000', unitWI: '0.00000000'}})), subtotals: {tractNRI: '0.00000000', isNRIBalanced: false, tractWI: '0.00000000', isWIBalanced: false}})),
+                         totals: {...defaultReturn.totals, unitAcres: unitAcresNum }
+                     };
+                }
+                if (unitAcresNum === 0) return defaultReturn;
+
+
+                const ownerSummary = new Map();
+
+                const processedTracts = tracts.map(tract => {
+                    const tractGrossAcres = parseFloat(tract.grossAcres);
+                    if (isNaN(tractGrossAcres)) return {...tract, owners: [], subtotals: {}};
+                    
+                    const tractFactor = tractGrossAcres > 0 && unitAcresNum > 0 ? tractGrossAcres / unitAcresNum : 0;
+
+                    const groupAggregates = new Map();
+                    tract.owners.forEach(owner => {
+                        if (owner.interestType === 'Unleased') return;
+                        const groupName = owner.burdenGroup.trim();
+                        if (!groupName) return;
+
+                        if (!groupAggregates.has(groupName)) {
+                            groupAggregates.set(groupName, { totalMineralInterest: 0, leaseRoyalty: 0, totalOrriBurden: 0, totalNpNriBurden: 0 });
+                        }
+                        const aggregate = groupAggregates.get(groupName);
+                        const interest = parseFloat(owner.interest);
+                        const mineralInterest = parseFloat(owner.mineralInterest);
+                        if(isNaN(interest) || isNaN(mineralInterest)) return;
+
+                        if (owner.interestType === 'RI') {
+                            aggregate.totalMineralInterest += mineralInterest;
+                            if (aggregate.leaseRoyalty === 0) aggregate.leaseRoyalty = interest; // Capture the first RI's interest as the lease royalty
+                        }
+                         if (owner.interestType === 'NPRI') {
+                            aggregate.totalNpNriBurden += interest;
+                        }
+                        if (owner.interestType === 'ORRI') {
+                            aggregate.totalOrriBurden += interest;
+                        }
+                    });
+
+                    const processedOwners = tract.owners.map(owner => {
+                        const interest = parseFloat(owner.interest);
+                        const mineralInterest = parseFloat(owner.mineralInterest);
+                        if(isNaN(interest) || isNaN(mineralInterest)) return {...owner, calculated: {tractNRI: '0.00000000', unitNRI: '0.00000000', tractWI: '0.00000000', unitWI: '0.00000000'}};
+                        
+                        let tractNRI = 0;
+                        let tractWI = 0;
+                        let unitWI = 0;
+
+                        if (owner.interestType === 'Unleased') {
+                            tractNRI = mineralInterest;
+                            tractWI = mineralInterest;
+                            unitWI = mineralInterest * tractFactor;
+                        } else {
+                            const groupName = owner.burdenGroup.trim();
+                            const aggregate = groupAggregates.get(groupName);
+                            if (aggregate) {
+                                switch (owner.interestType) {
+                                    case 'WI':
+                                        const royaltyBurden = aggregate.leaseRoyalty * aggregate.totalMineralInterest;
+                                        const orriBurden = aggregate.totalOrriBurden * aggregate.totalMineralInterest;
+                                        const totalBurdens = royaltyBurden + orriBurden;
+                                        tractWI = interest * aggregate.totalMineralInterest;
+                                        tractNRI = tractWI - totalBurdens;
+                                        unitWI = tractWI * tractFactor;
+                                        break;
+                                    case 'RI':
+                                        const retainedRoyalty = aggregate.leaseRoyalty - aggregate.totalNpNriBurden;
+                                        tractNRI = retainedRoyalty * mineralInterest;
+                                        break;
+                                    case 'ORRI':
+                                        tractNRI = interest * aggregate.totalMineralInterest;
+                                        break;
+                                    case 'NPRI':
+                                         tractNRI = interest * aggregate.totalMineralInterest;
+                                         break;
+                                    default:
+                                        tractNRI = 0;
+                                }
+                            }
+                        }
+                        
+                        const unitNRI = tractNRI * tractFactor;
+
+                        const ownerName = owner.name.trim();
+                        if (ownerName) {
+                            const summary = ownerSummary.get(ownerName) || { totalWI: 0, totalNRI: 0, nriFromWI: 0, nriFromRI: 0, nriFromORRI: 0, nriFromNPRI: 0 };
+                            summary.totalWI += unitWI;
+                            summary.totalNRI += unitNRI;
+                            if (owner.interestType === 'WI' || owner.interestType === 'Unleased') summary.nriFromWI += unitNRI;
+                            if (owner.interestType === 'RI') summary.nriFromRI += unitNRI;
+                            if (owner.interestType === 'ORRI') summary.nriFromORRI += unitNRI;
+                            if (owner.interestType === 'NPRI') summary.nriFromNPRI += unitNRI;
+                            ownerSummary.set(ownerName, summary);
+                        }
+
+                        return { ...owner, calculated: { 
+                            tractNRI: formatInterest(tractNRI), 
+                            unitNRI: formatInterest(unitNRI), 
+                            tractWI: formatInterest(tractWI), 
+                            unitWI: formatInterest(unitWI) 
+                        }};
+                    });
+                    
+                    const subtotalTractNRI = processedOwners.reduce((sum, owner) => sum + parseFloat(owner.calculated.tractNRI || 0), 0);
+                    const subtotalTractWI = processedOwners.reduce((sum, owner) => sum + parseFloat(owner.calculated.tractWI || 0), 0);
+
+                    return { 
+                        ...tract, 
+                        owners: processedOwners, 
+                        subtotals: { 
+                            tractNRI: formatInterest(subtotalTractNRI), 
+                            isNRIBalanced: Math.abs(subtotalTractNRI - 1.0) < 1e-8,
+                            tractWI: formatInterest(subtotalTractWI),
+                            isWIBalanced: Math.abs(subtotalTractWI - 1.0) < 1e-8,
+                        } 
+                    };
+                });
+
+                const ownerTotals = Array.from(ownerSummary.entries()).map(([name, totals]) => ({ name, ...totals })).sort((a,b) => a.name.localeCompare(b.name));
+
+                const summaryTotals = { totalWI: 0, totalNRI: 0, nriFromWI: 0, nriFromRI: 0, nriFromORRI: 0, nriFromNPRI: 0 };
+                ownerTotals.forEach(ot => {
+                    summaryTotals.totalWI += ot.totalWI;
+                    summaryTotals.totalNRI += ot.totalNRI;
+                    summaryTotals.nriFromWI += ot.nriFromWI;
+                    summaryTotals.nriFromRI += ot.nriFromRI;
+                    summaryTotals.nriFromORRI += ot.nriFromORRI;
+                    summaryTotals.nriFromNPRI += ot.nriFromNPRI;
+                });
+
+                return {
+                    tracts: processedTracts,
+                    totals: {
+                        unitAcres: unitAcresNum,
+                        unitNRI: formatInterest(summaryTotals.totalNRI),
+                        isBalanced: Math.abs(summaryTotals.totalNRI - 1.0) < 1e-8,
+                        isWIBalanced: Math.abs(summaryTotals.totalWI - 1.0) < 1e-8,
+                        summary: {
+                            totalWI: formatInterest(summaryTotals.totalWI),
+                            totalNRI: formatInterest(summaryTotals.totalNRI),
+                            nriFromWI: formatInterest(summaryTotals.nriFromWI),
+                            nriFromRI: formatInterest(summaryTotals.nriFromRI),
+                            nriFromORRI: formatInterest(summaryTotals.nriFromORRI),
+                            nriFromNPRI: formatInterest(summaryTotals.nriFromNPRI),
+                        }
+                    },
+                    ownerTotals: ownerTotals.map(ot => ({...ot, totalWI: formatInterest(ot.totalWI), totalNRI: formatInterest(ot.totalNRI), nriFromWI: formatInterest(ot.nriFromWI), nriFromRI: formatInterest(ot.nriFromRI), nriFromORRI: formatInterest(ot.nriFromORRI), nriFromNPRI: formatInterest(ot.nriFromNPRI) })),
+                };
+            }, [activeProject]);
+
+            // --- Project Handlers ---
+            const handleNewProject = () => {
+                const newProject = createNewProject();
+                setProjects(p => ({...p, [newProject.id]: newProject}));
+                setActiveProjectId(newProject.id);
+                setIsProjectsModalOpen(false);
+            };
+
+            const handleLoadProject = (projectId) => {
+                setActiveProjectId(projectId);
+                setIsProjectsModalOpen(false);
+            };
+
+            const handleDeleteProject = (projectId) => {
+                if (Object.keys(projects).length <= 1) {
+                    console.log("Cannot delete the last project.");
+                    return;
+                }
+                const newProjects = {...projects};
+                delete newProjects[projectId];
+                setProjects(newProjects);
+                if (activeProjectId === projectId) {
+                    setActiveProjectId(Object.keys(newProjects)[0]);
+                }
+            };
+
+            const handleDuplicateProject = (projectId) => {
+                const projectToDuplicate = projects[projectId];
+                if (!projectToDuplicate) return;
+
+                const newProject = JSON.parse(JSON.stringify(projectToDuplicate));
+                newProject.id = generateId();
+                newProject.projectName = `${projectToDuplicate.projectName} - Copy`;
+                newProject.tracts.forEach(tract => {
+                    tract.id = generateId();
+                    tract.owners.forEach(owner => {
+                        owner.id = generateId();
+                    });
+                });
+
+                setProjects(p => ({...p, [newProject.id]: newProject}));
+                setActiveProjectId(newProject.id);
+                setIsProjectsModalOpen(false);
+            };
+
+            // --- State Update Handlers ---
+            const setProjectName = (name) => setProjectState(p => ({...p, projectName: name}));
+            const setUnitAcresOverride = (acres) => setProjectState(p => ({...p, unitAcresOverride: acres}));
+            
+            const toggleUnitAcresMode = () => {
+                const currentOverride = activeProject.unitAcresOverride;
+                if (currentOverride === null) {
+                    const autoCalculatedUnitAcres = activeProject.tracts.reduce((sum, tract) => sum + (parseFloat(tract.grossAcres) || 0), 0);
+                    setUnitAcresOverride(autoCalculatedUnitAcres);
+                } else {
+                    setUnitAcresOverride(null);
+                }
+            };
+
+            const updateTract = React.useCallback((tractId, field, value) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, [field]: value } : t)})), [activeProject]);
+            const toggleTract = React.useCallback((tractId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, isExpanded: !t.isExpanded } : t)})), [activeProject]);
+            
+            const addTract = () => setProjectState(p => ({...p, tracts: [...p.tracts, { id: generateId(), name: `Tract ${p.tracts.length + 1}`, grossAcres: 0, isExpanded: true, owners: [createNewOwner()] }]}));
+            const removeTract = (tractId) => setProjectState(p => ({...p, tracts: p.tracts.filter(t => t.id !== tractId)}));
+            const duplicateTract = (tractId) => {
+                setProjectState(p => {
+                    const tractToDuplicate = p.tracts.find(t => t.id === tractId);
+                    if (!tractToDuplicate) return p;
+
+                    const newTract = JSON.parse(JSON.stringify(tractToDuplicate));
+                    newTract.id = generateId();
+                    newTract.name = `${tractToDuplicate.name} - Copy`;
+                    newTract.owners.forEach(owner => {
+                        owner.id = generateId();
+                    });
+
+                    const originalIndex = p.tracts.findIndex(t => t.id === tractId);
+                    const newTracts = [...p.tracts];
+                    newTracts.splice(originalIndex + 1, 0, newTract);
+                    
+                    return {...p, tracts: newTracts };
+                });
+            };
+
+            const addOwner = (tractId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: [...t.owners, createNewOwner()] } : t)}));
+            const removeOwner = React.useCallback((tractId, ownerId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: t.owners.length > 1 ? t.owners.filter(o => o.id !== ownerId) : t.owners } : t)})), [activeProject]);
+            
+            const updateOwner = React.useCallback((tractId, ownerId, field, value) => {
+                setProjectState(p => ({...p, tracts: p.tracts.map(t => {
+                    if (t.id === tractId) {
+                        const newOwners = t.owners.map(o => {
+                            if (o.id === ownerId) {
+                                const updatedOwner = { ...o, [field]: value };
+                                if (field === 'interestType') {
+                                    if (value === 'NPRI') { updatedOwner.mineralInterest = 0; updatedOwner.interest = 0; } 
+                                    else if (value === 'Unleased') { updatedOwner.interest = 1.0; updatedOwner.burdenGroup = ''; }
+                                }
+                                return updatedOwner;
+                            }
+                            return o;
+                        });
+                        return { ...t, owners: newOwners };
+                    }
+                    return t;
+                })}));
+            }, [activeProject]);
+
+            const handlePasteData = (tractId, pastedText, columnsToUpdate) => {
+                const rows = pastedText.split('\n').map(row => row.split('\t').map(cell => cell.trim())).filter(row => row.length > 0 && row[0]);
+                if (rows.length === 0) return;
+
+                setProjectState(p => {
+                    const tractIndex = p.tracts.findIndex(t => t.id === tractId);
+                    if (tractIndex === -1) return p;
+                    
+                    const currentTract = p.tracts[tractIndex];
+                    const ownersMap = new Map(currentTract.owners.map(o => [o.name.trim().toLowerCase(), o]));
+                    const newOwnersToAdd = [];
+                    let updatedOwners = [...currentTract.owners];
+
+                    rows.forEach(cells => {
+                        const ownerName = cells[0]?.trim();
+                        if (!ownerName) return;
+
+                        const existingOwnerIndex = updatedOwners.findIndex(o => o.name.trim().toLowerCase() === ownerName.toLowerCase());
+                        const dataColumns = columnsToUpdate.slice(1); 
+
+                        if (existingOwnerIndex !== -1) {
+                            const ownerToUpdate = { ...updatedOwners[existingOwnerIndex] };
+                            dataColumns.forEach((col, index) => {
+                                const newValue = cells[index + 1];
+                                if (newValue !== undefined) {
+                                    if (col.type === 'number') {
+                                        ownerToUpdate[col.id] = parseFloat(newValue) || ownerToUpdate[col.id];
+                                    } else {
+                                        ownerToUpdate[col.id] = newValue;
+                                    }
+                                }
+                            });
+                            updatedOwners[existingOwnerIndex] = ownerToUpdate;
+                        } else {
+                            const newOwner = createNewOwner();
+                            newOwner.name = ownerName;
+                            dataColumns.forEach((col, index) => {
+                                 const newValue = cells[index + 1];
+                                 if (newValue !== undefined) {
+                                    if (col.type === 'number') {
+                                        newOwner[col.id] = parseFloat(newValue) || newOwner[col.id];
+                                    } else {
+                                        newOwner[col.id] = newValue;
+                                    }
+                                }
+                            });
+                            newOwnersToAdd.push(newOwner);
+                        }
+                    });
+
+                    const finalOwners = [...updatedOwners, ...newOwnersToAdd];
+                    const newTracts = [...p.tracts];
+                    newTracts[tractIndex] = {...currentTract, owners: finalOwners};
+                    
+                    return { ...p, tracts: newTracts };
+                });
+
+                setPasteModalInfo({ isOpen: false, tractId: null });
+            };
+
+            const exportToXLSX = React.useCallback(() => {
+                if (!activeProject || typeof XLSX === 'undefined') return;
+                
+                const workbook = XLSX.utils.book_new();
+                const worksheetData = [];
+                const { projectName } = activeProject;
+                const { unitAcres } = calculatedData.totals;
+
+                worksheetData.push([projectName]);
+                worksheetData.push([`Unit Acres:`, unitAcres]);
+                worksheetData.push([`Total Unit NRI:`, calculatedData.totals.unitNRI]);
+                worksheetData.push([]); 
+
+                const header = ['Owner', 'Interest Type', 'Burden Group', 'Interest', 'Mineral %', 'Tract WI', 'Tract NRI', 'Unit WI', 'Unit NRI'];
+                worksheetData.push(header);
+
+                calculatedData.tracts.forEach(tract => {
+                    worksheetData.push([`Tract: ${tract.name}`, `Gross Acres: ${tract.grossAcres}`]);
+                    
+                    tract.owners.forEach(owner => {
+                        worksheetData.push([
+                            owner.name,
+                            owner.interestType,
+                            owner.burdenGroup,
+                            parseFloat(owner.interest),
+                            (owner.interestType === 'RI' || owner.interestType === 'NPRI' || owner.interestType === 'Unleased') ? parseFloat(owner.mineralInterest) : '',
+                            parseFloat(owner.calculated.tractWI),
+                            parseFloat(owner.calculated.tractNRI),
+                            parseFloat(formatInterest(owner.calculated.unitWI)),
+                            parseFloat(formatInterest(owner.calculated.unitNRI))
+                        ]);
+                    });
+
+                    worksheetData.push(['', '', '', '', '', 'Tract WI Total:', parseFloat(tract.subtotals.tractWI), 'Tract NRI Total:', parseFloat(tract.subtotals.tractNRI)]);
+                    worksheetData.push([]);
+                });
+
+                worksheetData.push([]);
+                worksheetData.push(['Unit-Level Owner Totals']);
+                worksheetData.push(['Owner', 'Total Unit WI', 'Total Unit NRI', 'NRI from WI', 'NRI from RI', 'NRI from ORRI', 'NRI from NPRI']);
+                calculatedData.ownerTotals.forEach(ot => {
+                    worksheetData.push([ot.name, parseFloat(ot.totalWI), parseFloat(ot.totalNRI), parseFloat(ot.nriFromWI), parseFloat(ot.nriFromRI), parseFloat(ot.nriFromORRI), parseFloat(ot.nriFromNPRI)]);
+                });
+                const summary = calculatedData.totals.summary;
+                worksheetData.push(['Totals:', parseFloat(summary.totalWI), parseFloat(summary.totalNRI), parseFloat(summary.nriFromWI), parseFloat(summary.nriFromRI), parseFloat(summary.nriFromORRI), parseFloat(summary.nriFromNPRI)]);
+
+
+                const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+                XLSX.utils.book_append_sheet(workbook, worksheet, 'DOI Calculation');
+                const safeProjectName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                XLSX.writeFile(workbook, `${safeProjectName}_export.xlsx`);
+                
+            }, [calculatedData, activeProject]);
+
+
+            // --- Render ---
+            if (!activeProject) {
+                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Loading projects...</p></div>;
+            }
+
+            const isUnitAcresManual = activeProject.unitAcresOverride !== null;
+
+            return (
+                <div className="bg-slate-50 h-screen flex flex-col font-sans text-slate-800">
+                    {isProjectsModalOpen && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={() => setIsProjectsModalOpen(false)}>
+                            <div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+                                <div className="p-4 border-b">
+                                    <h2 className="text-xl font-bold">Manage Projects</h2>
+                                </div>
+                                <div className="p-4 max-h-96 overflow-y-auto">
+                                    {Object.values(projects).map(proj => (
+                                        <div key={proj.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-100">
+                                            <span className="font-medium">{proj.projectName}</span>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => handleLoadProject(proj.id)} className="text-sm bg-blue-500 text-white py-1 px-3 rounded-md hover:bg-blue-600">Load</button>
+                                                <button onClick={() => handleDuplicateProject(proj.id)} className="text-sm bg-gray-500 text-white py-1 px-3 rounded-md hover:bg-gray-600">Copy</button>
+                                                <button onClick={() => handleDeleteProject(proj.id)} className="text-slate-400 hover:text-red-600">Del</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-4 border-t">
+                                    <button onClick={handleNewProject} className="w-full flex items-center justify-center gap-2 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600">
+                                        [+] Create New Project
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {pasteModalInfo.isOpen && (
+                        <PasteDataModal 
+                            tract={activeProject.tracts.find(t => t.id === pasteModalInfo.tractId)} 
+                            onPaste={handlePasteData} 
+                            onClose={() => setPasteModalInfo({isOpen: false, tractId: null})} 
+                        />
+                    )}
+                    
+                    <div className="max-w-full mx-auto w-full flex flex-col h-full">
+                        <div className="p-4 sm:p-6 lg:p-8 flex-shrink-0">
+                            <header className="mb-6 flex justify-between items-center">
+                                <input 
+                                    type="text"
+                                    value={activeProject.projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    className="text-3xl font-bold text-slate-900 bg-transparent w-full p-1 -ml-1 focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-lg"
+                                    placeholder="Enter Project Name"
+                                />
+                                <button onClick={() => setIsProjectsModalOpen(true)} className="flex items-center gap-2 bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg shadow-sm border border-slate-300 hover:bg-slate-50 transition-all">
+                                    [F] Projects
+                                </button>
+                            </header>
+                            <p className="text-slate-600 mt-1 -mt-5 mb-5">Enter tracts, burden groups, and ownership to calculate the final DOI.</p>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Total Spacing Unit Acres</label>
+                                    <div className="flex items-center gap-2">
+                                        <input type="number" value={isUnitAcresManual ? activeProject.unitAcresOverride : calculatedData.totals.unitAcres} 
+                                               onChange={(e) => setUnitAcresOverride(e.target.value)}
+                                               disabled={!isUnitAcresManual}
+                                               className="font-mono text-2xl font-semibold text-slate-900 w-full bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-md p-1 disabled:bg-slate-50" />
+                                        <button onClick={toggleUnitAcresMode} className="p-2 rounded-md hover:bg-slate-200 text-slate-500">
+                                            {isUnitAcresManual ? "[U]" : "[L]"}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
+                                     <div className="text-center">
+                                         <p className="text-sm text-slate-500">Total Unit WI</p>
+                                         <p className={`font-mono text-2xl font-semibold ${calculatedData.totals.isWIBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</p>
+                                     </div>
+                                </div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
+                                     <div className="text-center">
+                                         <p className="text-sm text-slate-500">Total Unit NRI</p>
+                                         <p className={`font-mono text-2xl font-semibold ${calculatedData.totals.isBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.unitNRI}</p>
+                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex-grow overflow-auto px-4 sm:px-6 lg:px-8">
+                            <div className="bg-white rounded-lg shadow-sm border border-slate-200">
+                                <div className="min-w-[1200px] sticky top-0 z-10">
+                                    <div className="grid grid-cols-12 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
+                                        <div className="col-span-2">Owner</div>
+                                        <div className="col-span-1">Interest Type</div>
+                                        <div className="col-span-1">Burden Group</div>
+                                        <div className="col-span-1 text-right">Interest</div>
+                                        <div className="col-span-1 text-right">Mineral %</div>
+                                        <div className="col-span-1 text-right">Tract WI</div>
+                                        <div className="col-span-1 text-right">Tract NRI</div>
+                                        <div className="col-span-2 text-right">Unit WI</div>
+                                        <div className="col-span-2 text-right">Unit NRI</div>
+                                    </div>
+                                </div>
+                                <div className="min-w-[1200px]">
+                                    {calculatedData.tracts.map(tract => (
+                                        <TractComponent key={tract.id} tract={tract} onUpdateTract={updateTract} onToggleTract={toggleTract} onRemoveTract={removeTract} onDuplicateTract={duplicateTract} onUpdateOwner={updateOwner} onAddOwner={addOwner} onRemoveOwner={removeOwner} onOpenPasteModal={() => setPasteModalInfo({isOpen: true, tractId: tract.id})} />
+                                    ))}
+                                </div>
+                            </div>
+
+                             <div className="mt-8">
+                                 <h2 className="text-2xl font-bold text-slate-800 mb-4">Unit-Level Owner Totals</h2>
+                                 <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
+                                     <div className="min-w-[1400px]">
+                                         <div className="grid grid-cols-7 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
+                                             <div className="col-span-1">Owner</div>
+                                             <div className="col-span-1 text-right">Total Unit WI</div>
+                                             <div className="col-span-1 text-right">Total Unit NRI</div>
+                                             <div className="col-span-1 text-right">NRI from WI</div>
+                                             <div className="col-span-1 text-right">NRI from RI</div>
+                                             <div className="col-span-1 text-right">NRI from ORRI</div>
+                                             <div className="col-span-1 text-right">NRI from NPRI</div>
+                                         </div>
+                                         {calculatedData.ownerTotals.map(ownerTotal => (
+                                             <div key={ownerTotal.name} className="grid grid-cols-7 gap-4 p-3 items-center border-t border-slate-100">
+                                                 <div className="col-span-1 font-medium text-slate-900">{ownerTotal.name}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.totalWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right font-semibold text-teal-700">{ownerTotal.totalNRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromORRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromNPRI}</div>
+                                             </div>
+                                         ))}
+                                          <div className="grid grid-cols-7 gap-4 p-3 items-center border-t-2 border-slate-200 bg-slate-50">
+                                             <div className="col-span-1 font-bold text-slate-700">Totals:</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold ${calculatedData.totals.isWIBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold ${calculatedData.totals.isBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalNRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromWI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromORRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromNPRI}</div>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </div>
+                        </div>
+                    </div>
+                    <div className="p-4 sm:px-6 lg:px-8 flex-shrink-0 border-t border-slate-200 mt-4">
+                         <div className="flex flex-col sm:flex-row gap-4">
+                             <button onClick={addTract} className="flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-all duration-200 w-full sm:w-auto">
+                                 [+] Add Tract
+                             </button>
+                             <button onClick={exportToXLSX} className="flex items-center justify-center gap-2 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all duration-200 w-full sm:w-auto">
+                                 [D] Export to XLSX
+                             </button>
+                         </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Tract Component ---
+        const TractComponent = ({ tract, onUpdateTract, onToggleTract, onRemoveTract, onDuplicateTract, onUpdateOwner, onAddOwner, onRemoveOwner, onOpenPasteModal }) => (
+            <div className="border-b border-slate-200 last:border-b-0">
+                <div className="grid grid-cols-12 gap-4 p-3 bg-slate-50 items-center">
+                    <div className="col-span-5 flex items-center">
+                        <button onClick={() => onToggleTract(tract.id)} className="mr-2 text-slate-500 hover:text-slate-800">{tract.isExpanded ? "[v]" : "[>]"}</button>
+                        <input type="text" value={tract.name} onChange={(e) => onUpdateTract(tract.id, 'name', e.target.value)} className="font-bold bg-transparent p-1 -ml-1 rounded-md w-full focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div className="col-span-5">
+                        <div className="flex items-center">
+                            <input type="number" value={tract.grossAcres} onChange={(e) => onUpdateTract(tract.id, 'grossAcres', e.target.value)} className="w-full text-right bg-transparent p-1 rounded-md focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                            <span className="text-xs text-slate-500 ml-1">Acres</span>
+                        </div>
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                        <button onClick={() => onDuplicateTract(tract.id)} className="text-blue-500 hover:text-blue-700 transition-colors">Copy</button>
+                        <button onClick={() => onRemoveTract(tract.id)} className="text-red-500 hover:text-red-700 transition-colors">[X]</button>
+                    </div>
+                </div>
+                {tract.isExpanded && (
+                    <div>
+                        <div className="overflow-x-auto">
+                            <div className="min-w-[1100px]">
+                                {tract.owners.map(owner => <OwnerComponent key={owner.id} tract={tract} owner={owner} onUpdateOwner={onUpdateOwner} onRemoveOwner={onRemoveOwner} />)}
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-12 gap-4 p-4 items-center border-t-2 border-slate-200 bg-slate-50">
+                            <div className="col-span-6 font-bold text-slate-700 text-right pr-4">Tract Totals:</div>
+                            <div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isWIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractWI}</div>
+                            <div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isNRIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractNRI}</div>
+                            <div className="col-span-4"></div>
+                        </div>
+
+                        <div className="p-2 flex justify-start pl-4 gap-4">
+                            <button onClick={() => onAddOwner(tract.id)} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 font-semibold">[+] Add Owner Interest</button>
+                            <button onClick={() => onOpenPasteModal(tract.id)} className="flex items-center gap-1 text-sm text-green-600 hover:text-green-800 font-semibold">[P] Paste from Sheet</button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+
+        // --- Owner Component ---
+        const OwnerComponent = ({ tract, owner, onUpdateOwner, onRemoveOwner }) => {
+            const showMineralInterest = owner.interestType === 'RI' || owner.interestType === 'NPRI' || owner.interestType === 'Unleased';
+            const isUnleased = owner.interestType === 'Unleased';
+
+            return (
+                <div className="grid grid-cols-12 gap-4 p-3 pl-4 items-center border-t border-slate-100 hover:bg-blue-50/30 group">
+                    <div className="col-span-2">
+                        <input type="text" value={owner.name} onChange={(e) => onUpdateOwner(owner.id, 'name', e.target.value)} className="w-full p-1 rounded-md bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div className="col-span-1">
+                        <select value={owner.interestType} onChange={(e) => onUpdateOwner(owner.id, 'interestType', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 bg-white">
+                            <option>WI</option>
+                            <option>RI</option>
+                            <option>ORRI</option>
+                            <option>NPRI</option>
+                            <option>Unleased</option>
+                        </select>
+                    </div>
+                    <div className="col-span-1">
+                         <input type="text" value={owner.burdenGroup} disabled={isUnleased} onChange={(e) => onUpdateOwner(owner.id, 'burdenGroup', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" placeholder={isUnleased ? 'N/A' : 'e.g., Lease A'} />
+                    </div>
+                    <div className="col-span-1">
+                        <input type="number" step="0.00000001" value={owner.interest} disabled={isUnleased} onChange={(e) => onUpdateOwner(owner.id, 'interest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" />
+                    </div>
+                    <div className="col-span-1">
+                        {showMineralInterest && <input type="number" step="0.00000001" value={owner.mineralInterest} onChange={(e) => onUpdateOwner(owner.id, 'mineralInterest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500" />}
+                    </div>
+                    <div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractWI}</div>
+                    <div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractNRI}</div>
+                    <div className="col-span-2 font-mono text-sm text-right text-slate-700">{owner.calculated.unitWI}</div>
+                    <div className="col-span-2 flex items-center justify-end">
+                        <span className="font-mono text-sm text-right font-semibold text-teal-700">{owner.calculated.unitNRI}</span>
+                        <button onClick={() => onRemoveOwner(tract.id, owner.id)} className="ml-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">[X]</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Paste Data Modal Component ---
+        const PasteDataModal = ({ tract, onPaste, onClose }) => {
+            const [pastedText, setPastedText] = React.useState('');
+            const [columns, setColumns] = React.useState([{ id: 'name', name: 'Owner', type: 'text' }]);
+
+            const availableColumns = [
+                { id: 'interestType', name: 'Interest Type', type: 'text' },
+                { id: 'burdenGroup', name: 'Burden Group', type: 'text' },
+                { id: 'interest', name: 'Interest', type: 'number' },
+                { id: 'mineralInterest', name: 'Mineral %', type: 'number' },
+            ];
+
+            const handleColumnToggle = (columnId) => {
+                const isSelected = columns.find(c => c.id === columnId);
+                if (isSelected) {
+                    setColumns(columns.filter(c => c.id !== columnId));
+                } else {
+                    const column = availableColumns.find(c => c.id === columnId);
+                    const newColumns = [...columns, column];
+                    // Maintain a logical order
+                    const orderedIds = ['name', ...availableColumns.map(c => c.id)];
+                    newColumns.sort((a,b) => orderedIds.indexOf(a.id) - orderedIds.indexOf(b.id));
+                    setColumns(newColumns);
+                }
+            };
+
+            const handleSubmit = () => {
+                onPaste(tract.id, pastedText, columns);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={onClose}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b">
+                            <h2 className="text-xl font-bold">Paste Spreadsheet Data for {tract.name}</h2>
+                        </div>
+                        <div className="p-4">
+                            <p className="text-sm text-slate-600 mb-2">Select the columns you are pasting from your spreadsheet. The tool will add new owners or update existing ones based on the owner's name.</p>
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="p-2 bg-blue-100 text-blue-800 rounded-md text-sm font-semibold">Owner</span>
+                                {availableColumns.map(col => (
+                                     <label key={col.id} className="flex items-center gap-2 p-2 bg-slate-100 rounded-md cursor-pointer hover:bg-slate-200">
+                                         <input type="checkbox" checked={columns.some(c => c.id === col.id)} onChange={() => handleColumnToggle(col.id)} />
+                                         {col.name}
+                                     </label>
+                                ))}
+                            </div>
+                            <textarea
+                                value={pastedText}
+                                onChange={(e) => setPastedText(e.target.value)}
+                                className="w-full h-48 p-2 border border-slate-300 rounded-md shadow-inner bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                                placeholder={`Paste your data here. The tool expects columns in this order:\n${columns.map(c => c.name).join(' | ')}`}
+                            />
+                        </div>
+                        <div className="p-4 border-t flex justify-end gap-4">
+                            <button onClick={onClose} className="bg-slate-200 text-slate-800 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 transition-all">Cancel</button>
+                            <button onClick={handleSubmit} className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all">
+                                Process Pasted Data
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // This is the final step: Render the App component into the 'root' div using the new React 18 API.
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
 </body>
 </html>
