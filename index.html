@@ -38,6 +38,7 @@
         const ChevronUpIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>;
         const PlusCircleIcon = ({ size = 18 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>;
         const FileDownIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
+        const FileUpIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
         const FolderIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>;
         const CopyIcon = ({ size = 20 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>;
         const XCircleIcon = ({ size = 20 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>;
@@ -226,6 +227,7 @@
             const [isProjectsModalOpen, setIsProjectsModalOpen] = React.useState(false);
             const [pasteModalInfo, setPasteModalInfo] = React.useState({ isOpen: false, tractId: null });
             const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
+            const fileInputRef = React.useRef(null);
 
 
             // Derived state for the active project
@@ -313,7 +315,7 @@
                     
                     // First pass: aggregate burdens and mineral interests by group
                     tract.owners.forEach(owner => {
-                        const groupName = owner.burdenGroup.trim();
+                        const groupName = String(owner.burdenGroup || '').trim();
                         if (!groupName || owner.interestType === 'Unleased') return;
 
                         if (!groupAggregates.has(groupName)) {
@@ -354,7 +356,7 @@
                             tractNRI = mineralInterest;
                             tractWI = mineralInterest;
                         } else {
-                            const groupName = owner.burdenGroup.trim();
+                            const groupName = String(owner.burdenGroup || '').trim();
                             const aggregate = groupAggregates.get(groupName);
                             if (aggregate) {
                                 switch (owner.interestType) {
@@ -673,6 +675,69 @@
                 XLSX.writeFile(workbook, `${safeProjectName}_export.xlsx`);
                 
             }, [calculatedData, activeProject]);
+            
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const data = e.target.result;
+                    const workbook = XLSX.read(data, { type: 'binary' });
+                    const sheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    try {
+                        const newProject = createNewProject();
+                        newProject.projectName = json[0][0] || 'Imported Project';
+                        newProject.unitAcresOverride = parseFloat(json[1][1]) || null;
+                        newProject.tracts = [];
+
+                        let currentTract = null;
+
+                        for (let i = 4; i < json.length; i++) {
+                            const row = json[i];
+                            if (row[0] && row[0].toString().startsWith('Tract:')) {
+                                if (currentTract) {
+                                    newProject.tracts.push(currentTract);
+                                }
+                                currentTract = {
+                                    id: generateId(),
+                                    name: row[0].toString().replace('Tract: ', '').trim(),
+                                    grossAcres: parseFloat(row[1].toString().replace('Gross Acres: ', '')) || 0,
+                                    isExpanded: true,
+                                    owners: []
+                                };
+                            } else if (currentTract && row[0] && !row[0].toString().startsWith('Tract:') && row[0] !== 'Owner' && row[0] !== 'Unit-Level Owner Totals' && row[0] !== 'Totals:') {
+                                // This is an owner row
+                                if(row.length > 1) { // Make sure it's not an empty row
+                                    currentTract.owners.push({
+                                        id: generateId(),
+                                        name: row[0] || '',
+                                        interestType: row[1] || 'WI',
+                                        burdenGroup: row[2] || '',
+                                        interest: parseFloat(row[3]) || 0,
+                                        mineralInterest: parseFloat(row[4]) || 0,
+                                    });
+                                }
+                            }
+                        }
+                        if (currentTract) {
+                            newProject.tracts.push(currentTract);
+                        }
+
+                        setProjects(p => ({...p, [newProject.id]: newProject}));
+                        setActiveProjectId(newProject.id);
+
+                    } catch (err) {
+                        console.error("Failed to parse XLSX file:", err);
+                        alert("Could not import the file. Please ensure it is a valid XLSX file exported from this tool.");
+                    }
+                };
+                reader.readAsBinaryString(file);
+                event.target.value = ''; // Reset file input
+            };
 
 
             // --- Render ---
@@ -750,13 +815,13 @@
                                 <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
                                      <div className="text-center">
                                          <p className="text-sm text-slate-500">Total Unit WI</p>
-                                         <p className={`font-mono text-2xl font-semibold ${calculatedData.totals.isWIBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</p>
+                                         <p className={`font-mono text-2xl font-semibold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</p>
                                      </div>
                                 </div>
                                 <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
                                      <div className="text-center">
                                          <p className="text-sm text-slate-500">Total Unit NRI</p>
-                                         <p className={`font-mono text-2xl font-semibold ${calculatedData.totals.isBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.unitNRI}</p>
+                                         <p className={`font-mono text-2xl font-semibold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.unitNRI}</p>
                                      </div>
                                 </div>
                             </div>
@@ -788,34 +853,36 @@
                                  <h2 className="text-2xl font-bold text-slate-800 mb-4">Unit-Level Owner Totals</h2>
                                  <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
                                      <div className="min-w-[1400px]">
-                                         <div className="grid grid-cols-7 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
-                                             <div className="col-span-1">Owner</div>
-                                             <div className="col-span-1 text-right">Total Unit WI</div>
-                                             <div className="col-span-1 text-right">Total Unit NRI</div>
-                                             <div className="col-span-1 text-right">NRI from WI</div>
-                                             <div className="col-span-1 text-right">NRI from RI</div>
-                                             <div className="col-span-1 text-right">NRI from ORRI</div>
-                                             <div className="col-span-1 text-right">NRI from NPRI</div>
-                                         </div>
+                                        <div className="sticky top-0 z-10">
+                                             <div className="grid grid-cols-7 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
+                                                 <div className="col-span-1">Owner</div>
+                                                 <div className="col-span-1 text-right">Total Unit WI</div>
+                                                 <div className="col-span-1 text-right">Total Unit NRI</div>
+                                                 <div className="col-span-1 text-right">NRI from WI</div>
+                                                 <div className="col-span-1 text-right">NRI from RI</div>
+                                                 <div className="col-span-1 text-right">NRI from ORRI</div>
+                                                 <div className="col-span-1 text-right">NRI from NPRI</div>
+                                             </div>
+                                        </div>
                                          {calculatedData.ownerTotals.map(ownerTotal => (
                                              <div key={ownerTotal.name} className="grid grid-cols-7 gap-4 p-3 items-center border-t border-slate-100">
                                                  <div className="col-span-1 font-medium text-slate-900">{ownerTotal.name}</div>
-                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.totalWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-blue-600">{ownerTotal.totalWI}</div>
                                                  <div className="col-span-1 font-mono text-sm text-right font-semibold text-teal-700">{ownerTotal.totalNRI}</div>
-                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromWI}</div>
-                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromRI}</div>
-                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromORRI}</div>
-                                                 <div className="col-span-1 font-mono text-sm text-right">{ownerTotal.nriFromNPRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-slate-500">{ownerTotal.nriFromWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-purple-600">{ownerTotal.nriFromRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-orange-600">{ownerTotal.nriFromORRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-red-600">{ownerTotal.nriFromNPRI}</div>
                                              </div>
                                          ))}
                                           <div className="grid grid-cols-7 gap-4 p-3 items-center border-t-2 border-slate-200 bg-slate-50">
                                              <div className="col-span-1 font-bold text-slate-700">Totals:</div>
-                                             <div className={`col-span-1 font-mono text-sm text-right font-bold ${calculatedData.totals.isWIBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</div>
-                                             <div className={`col-span-1 font-mono text-sm text-right font-bold ${calculatedData.totals.isBalanced ? 'text-green-600' : 'text-amber-600'}`}>{calculatedData.totals.summary.totalNRI}</div>
-                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromWI}</div>
-                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromRI}</div>
-                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromORRI}</div>
-                                             <div className="col-span-1 font-mono text-sm text-right font-bold">{calculatedData.totals.summary.nriFromNPRI}</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalNRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-slate-500">{calculatedData.totals.summary.nriFromWI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-purple-600">{calculatedData.totals.summary.nriFromRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-orange-600">{calculatedData.totals.summary.nriFromORRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-red-600">{calculatedData.totals.summary.nriFromNPRI}</div>
                                          </div>
                                      </div>
                                  </div>
@@ -827,6 +894,10 @@
                              <button onClick={addTract} className="flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-all duration-200 w-full sm:w-auto">
                                  <PlusCircleIcon /> Add Tract
                              </button>
+                             <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 bg-teal-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-teal-700 transition-all duration-200 w-full sm:w-auto">
+                                 <FileUpIcon /> Import from XLSX
+                             </button>
+                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
                              <button onClick={exportToXLSX} className="flex items-center justify-center gap-2 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all duration-200 w-full sm:w-auto">
                                  <FileDownIcon /> Export to XLSX
                              </button>
