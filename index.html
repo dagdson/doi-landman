@@ -13,12 +13,36 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Load SheetJS for Excel export -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- 4. Load Firebase SDKs -->
+    <script type="module">
+        // IMPORTANT: These scripts are now modules to support Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, collection, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase modules to the global window object so Babel can see them
+        window.firebase = {
+            initializeApp,
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            getFirestore,
+            doc,
+            getDoc,
+            setDoc,
+            deleteDoc,
+            onSnapshot,
+            collection,
+            writeBatch
+        };
+    </script>
 </head>
 <body>
     <!-- This is where our React app will be rendered -->
     <div id="root"></div>
 
-    <!-- 4. Our React application code, now inside a special script tag -->
+    <!-- 5. Our React application code, now inside a special script tag -->
     <script type="text/babel">
         // --- Helper Functions ---
         const formatInterest = (num, places = 8) => {
@@ -221,63 +245,109 @@
 
         // --- Main App Component ---
         const App = () => {
-            // --- State Management ---
+            // --- Firebase State ---
+            const [db, setDb] = React.useState(null);
+            const [auth, setAuth] = React.useState(null);
+            const [userId, setUserId] = React.useState(null);
+            const [isLoading, setIsLoading] = React.useState(true);
+
+            // --- App State ---
             const [activeProjectId, setActiveProjectId] = React.useState(null);
             const [projects, setProjects] = React.useState({});
             const [isProjectsModalOpen, setIsProjectsModalOpen] = React.useState(false);
             const [pasteModalInfo, setPasteModalInfo] = React.useState({ isOpen: false, tractId: null });
-            const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
             const fileInputRef = React.useRef(null);
 
 
             // Derived state for the active project
             const activeProject = projects[activeProjectId] || null;
-            const setProjectState = (updater) => {
-                if (!activeProjectId) return;
-                setProjects(prev => ({
-                    ...prev,
-                    [activeProjectId]: updater(prev[activeProjectId])
-                }));
-            };
             
-            // --- Load projects from localStorage on initial render ---
+            // --- Firebase Initialization ---
             React.useEffect(() => {
-                try {
-                    const savedProjects = localStorage.getItem('landmanDoiProjects');
-                    const parsedProjects = savedProjects ? JSON.parse(savedProjects) : {};
-                    
-                    const lastActiveId = localStorage.getItem('landmanDoiLastActive');
+                // STEP 1: PASTE YOUR FIREBASE CONFIG OBJECT HERE
+                // Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
-                    if (Object.keys(parsedProjects).length > 0) {
-                        setProjects(parsedProjects);
-                        if (lastActiveId && parsedProjects[lastActiveId]) {
-                            setActiveProjectId(lastActiveId);
-                        } else {
-                            setActiveProjectId(Object.keys(parsedProjects)[0]);
-                        }
-                    } else {
-                        // If no projects, create a new one
-                        const newProject = createNewProject();
-                        setProjects({ [newProject.id]: newProject });
-                        setActiveProjectId(newProject.id);
-                    }
-                } catch (error) {
-                    console.error("Failed to load projects from localStorage", error);
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyBqv3PjYUomTNar3wGwsp5ltKvmhxanHJc",
+  authDomain: "landman-doi-calculator.firebaseapp.com",
+  projectId: "landman-doi-calculator",
+  storageBucket: "landman-doi-calculator.firebasestorage.app",
+  messagingSenderId: "257746559512",
+  appId: "1:257746559512:web:aafa3c105602b023d7596d"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+                // Check if firebaseConfig is populated
+                if (!firebaseConfig.apiKey) {
+                    console.warn("Firebase config is missing. Please paste it into the index.html file.");
+                    setIsLoading(false);
+                    // Fallback to local storage or a default state if Firebase is not configured
                     const newProject = createNewProject();
                     setProjects({ [newProject.id]: newProject });
                     setActiveProjectId(newProject.id);
+                    return;
                 }
+
+                const app = window.firebase.initializeApp(firebaseConfig);
+                const authInstance = window.firebase.getAuth(app);
+                const dbInstance = window.firebase.getFirestore(app);
+
+                setAuth(authInstance);
+                setDb(dbInstance);
+
+                const authenticateUser = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await window.firebase.signInWithCustomToken(authInstance, __initial_auth_token);
+                        } else {
+                            await window.firebase.signInAnonymously(authInstance);
+                        }
+                        setUserId(authInstance.currentUser.uid);
+                    } catch (error) {
+                        console.error("Firebase authentication failed:", error);
+                        setIsLoading(false);
+                    }
+                };
+
+                authenticateUser();
             }, []);
 
-            // --- Save projects to localStorage whenever they change ---
+            // --- Firebase Data Listener ---
             React.useEffect(() => {
-                if (Object.keys(projects).length > 0) {
-                    localStorage.setItem('landmanDoiProjects', JSON.stringify(projects));
-                }
-                if (activeProjectId) {
-                    localStorage.setItem('landmanDoiLastActive', activeProjectId);
-                }
-            }, [projects, activeProjectId]);
+                if (!db || !userId) return;
+
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectsCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${userId}/projects`);
+
+                const unsubscribe = window.firebase.onSnapshot(projectsCollectionRef, (snapshot) => {
+                    const fetchedProjects = {};
+                    snapshot.forEach(doc => {
+                        fetchedProjects[doc.id] = { id: doc.id, ...doc.data() };
+                    });
+
+                    if (Object.keys(fetchedProjects).length > 0) {
+                        setProjects(fetchedProjects);
+                        if (!activeProjectId || !fetchedProjects[activeProjectId]) {
+                            setActiveProjectId(Object.keys(fetchedProjects)[0]);
+                        }
+                    } else {
+                        // If no projects in DB, create a new one
+                        const newProject = createNewProject();
+                        const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
+                        window.firebase.setDoc(projectRef, newProject);
+                        // The listener will pick up this change and set state
+                    }
+                    setIsLoading(false);
+                });
+
+                return () => unsubscribe(); // Cleanup listener on component unmount
+            }, [db, userId]);
 
 
             // --- Core Calculation Logic ---
@@ -455,10 +525,21 @@
                 };
             }, [activeProject]);
 
+            // --- Firestore Data Handlers ---
+            const updateProjectInDb = async (updatedProject) => {
+                if (!db || !userId || !updatedProject) return;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${updatedProject.id}`);
+                await window.firebase.setDoc(projectRef, updatedProject, { merge: true });
+            };
+            
             // --- Project Handlers ---
-            const handleNewProject = () => {
+            const handleNewProject = async () => {
+                if (!db || !userId) return;
                 const newProject = createNewProject();
-                setProjects(p => ({...p, [newProject.id]: newProject}));
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
+                await window.firebase.setDoc(projectRef, newProject);
                 setActiveProjectId(newProject.id);
                 setIsProjectsModalOpen(false);
             };
@@ -468,20 +549,19 @@
                 setIsProjectsModalOpen(false);
             };
 
-            const handleDeleteProject = (projectId) => {
-                if (Object.keys(projects).length <= 1) {
+            const handleDeleteProject = async (projectId) => {
+                if (!db || !userId || Object.keys(projects).length <= 1) {
                     alert("You cannot delete the last project.");
                     return;
                 }
-                const newProjects = {...projects};
-                delete newProjects[projectId];
-                setProjects(newProjects);
-                if (activeProjectId === projectId) {
-                    setActiveProjectId(Object.keys(newProjects)[0]);
-                }
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${projectId}`);
+                await window.firebase.deleteDoc(projectRef);
+                // The realtime listener will handle updating the state
             };
 
-            const handleDuplicateProject = (projectId) => {
+            const handleDuplicateProject = async (projectId) => {
+                if (!db || !userId) return;
                 const projectToDuplicate = projects[projectId];
                 if (!projectToDuplicate) return;
 
@@ -490,19 +570,26 @@
                 newProject.projectName = `${projectToDuplicate.projectName} - Copy`;
                 newProject.tracts.forEach(tract => {
                     tract.id = generateId();
-                    tract.owners.forEach(owner => {
-                        owner.id = generateId();
-                    });
+                    tract.owners.forEach(owner => owner.id = generateId());
                 });
 
-                setProjects(p => ({...p, [newProject.id]: newProject}));
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
+                await window.firebase.setDoc(projectRef, newProject);
                 setActiveProjectId(newProject.id);
                 setIsProjectsModalOpen(false);
             };
 
-            // --- State Update Handlers ---
-            const setProjectName = (name) => setProjectState(p => ({...p, projectName: name}));
-            const setUnitAcresOverride = (acres) => setProjectState(p => ({...p, unitAcresOverride: acres}));
+            // --- State Update Handlers (now they also update Firestore) ---
+            const setProjectStateAndDb = (updater) => {
+                if (!activeProjectId) return;
+                const updatedProject = updater(projects[activeProjectId]);
+                setProjects(prev => ({ ...prev, [activeProjectId]: updatedProject }));
+                updateProjectInDb(updatedProject);
+            };
+
+            const setProjectName = (name) => setProjectStateAndDb(p => ({...p, projectName: name}));
+            const setUnitAcresOverride = (acres) => setProjectStateAndDb(p => ({...p, unitAcresOverride: acres}));
             
             const toggleUnitAcresMode = () => {
                 const currentOverride = activeProject.unitAcresOverride;
@@ -513,23 +600,21 @@
                     setUnitAcresOverride(null);
                 }
             };
-
-            const updateTract = React.useCallback((tractId, field, value) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, [field]: value } : t)})), [activeProject]);
-            const toggleTract = React.useCallback((tractId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, isExpanded: !t.isExpanded } : t)})), [activeProject]);
             
-            const addTract = () => setProjectState(p => ({...p, tracts: [...p.tracts, { id: generateId(), name: `Tract ${p.tracts.length + 1}`, grossAcres: 0, isExpanded: true, owners: [createNewOwner()] }]}));
-            const removeTract = (tractId) => setProjectState(p => ({...p, tracts: p.tracts.filter(t => t.id !== tractId)}));
+            const updateTract = (tractId, field, value) => setProjectStateAndDb(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, [field]: value } : t)}));
+            const toggleTract = (tractId) => setProjectStateAndDb(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, isExpanded: !t.isExpanded } : t)}));
+            const addTract = () => setProjectStateAndDb(p => ({...p, tracts: [...p.tracts, { id: generateId(), name: `Tract ${p.tracts.length + 1}`, grossAcres: 0, isExpanded: true, owners: [createNewOwner()] }]}));
+            const removeTract = (tractId) => setProjectStateAndDb(p => ({...p, tracts: p.tracts.filter(t => t.id !== tractId)}));
+            
             const duplicateTract = (tractId) => {
-                setProjectState(p => {
+                setProjectStateAndDb(p => {
                     const tractToDuplicate = p.tracts.find(t => t.id === tractId);
                     if (!tractToDuplicate) return p;
 
                     const newTract = JSON.parse(JSON.stringify(tractToDuplicate));
                     newTract.id = generateId();
                     newTract.name = `${tractToDuplicate.name} - Copy`;
-                    newTract.owners.forEach(owner => {
-                        owner.id = generateId();
-                    });
+                    newTract.owners.forEach(owner => owner.id = generateId());
 
                     const originalIndex = p.tracts.findIndex(t => t.id === tractId);
                     const newTracts = [...p.tracts];
@@ -539,11 +624,11 @@
                 });
             };
 
-            const addOwner = (tractId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: [...t.owners, createNewOwner()] } : t)}));
-            const removeOwner = React.useCallback((tractId, ownerId) => setProjectState(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: t.owners.length > 1 ? t.owners.filter(o => o.id !== ownerId) : t.owners } : t)})), [activeProject]);
+            const addOwner = (tractId) => setProjectStateAndDb(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: [...t.owners, createNewOwner()] } : t)}));
+            const removeOwner = (tractId, ownerId) => setProjectStateAndDb(p => ({...p, tracts: p.tracts.map(t => t.id === tractId ? { ...t, owners: t.owners.length > 1 ? t.owners.filter(o => o.id !== ownerId) : t.owners } : t)}));
             
-            const updateOwner = React.useCallback((tractId, ownerId, field, value) => {
-                setProjectState(p => ({...p, tracts: p.tracts.map(t => {
+            const updateOwner = (tractId, ownerId, field, value) => {
+                setProjectStateAndDb(p => ({...p, tracts: p.tracts.map(t => {
                     if (t.id === tractId) {
                         const newOwners = t.owners.map(o => {
                             if (o.id === ownerId) {
@@ -560,19 +645,17 @@
                     }
                     return t;
                 })}));
-            }, [activeProject]);
+            };
 
             const handlePasteData = (tractId, pastedText, columnsToUpdate) => {
                 const rows = pastedText.split('\n').map(row => row.split('\t').map(cell => cell.trim())).filter(row => row.length > 0 && row[0]);
                 if (rows.length === 0) return;
 
-                setProjectState(p => {
+                setProjectStateAndDb(p => {
                     const tractIndex = p.tracts.findIndex(t => t.id === tractId);
                     if (tractIndex === -1) return p;
                     
                     const currentTract = p.tracts[tractIndex];
-                    const ownersMap = new Map(currentTract.owners.map(o => [o.name.trim().toLowerCase(), o]));
-                    const newOwnersToAdd = [];
                     let updatedOwners = [...currentTract.owners];
 
                     rows.forEach(cells => {
@@ -587,11 +670,7 @@
                             dataColumns.forEach((col, index) => {
                                 const newValue = cells[index + 1];
                                 if (newValue !== undefined) {
-                                    if (col.type === 'number') {
-                                        ownerToUpdate[col.id] = parseFloat(newValue) || ownerToUpdate[col.id];
-                                    } else {
-                                        ownerToUpdate[col.id] = newValue;
-                                    }
+                                    ownerToUpdate[col.id] = (col.type === 'number') ? parseFloat(newValue) || ownerToUpdate[col.id] : newValue;
                                 }
                             });
                             updatedOwners[existingOwnerIndex] = ownerToUpdate;
@@ -601,20 +680,15 @@
                             dataColumns.forEach((col, index) => {
                                  const newValue = cells[index + 1];
                                  if (newValue !== undefined) {
-                                    if (col.type === 'number') {
-                                        newOwner[col.id] = parseFloat(newValue) || newOwner[col.id];
-                                    } else {
-                                        newOwner[col.id] = newValue;
-                                    }
+                                    newOwner[col.id] = (col.type === 'number') ? parseFloat(newValue) || newOwner[col.id] : newValue;
                                 }
                             });
-                            newOwnersToAdd.push(newOwner);
+                            updatedOwners.push(newOwner);
                         }
                     });
 
-                    const finalOwners = [...updatedOwners, ...newOwnersToAdd];
                     const newTracts = [...p.tracts];
-                    newTracts[tractIndex] = {...currentTract, owners: finalOwners};
+                    newTracts[tractIndex] = {...currentTract, owners: updatedOwners};
                     
                     return { ...p, tracts: newTracts };
                 });
@@ -647,7 +721,7 @@
                             owner.interestType,
                             owner.burdenGroup,
                             parseFloat(owner.interest),
-                            (owner.interestType === 'RI' || owner.interestType === 'NPRI' || owner.interestType === 'Unleased') ? parseFloat(owner.mineralInterest) : '',
+                            (owner.interestType === 'RI' || owner.interestType === 'Unleased') ? parseFloat(owner.mineralInterest) : '',
                             parseFloat(owner.calculated.tractWI),
                             parseFloat(owner.calculated.tractNRI),
                             parseFloat(formatInterest(owner.calculated.unitWI)),
@@ -678,10 +752,10 @@
             
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
-                if (!file) return;
+                if (!file || !db || !userId) return;
 
                 const reader = new FileReader();
-                reader.onload = (e) => {
+                reader.onload = async (e) => {
                     const data = e.target.result;
                     const workbook = XLSX.read(data, { type: 'binary' });
                     const sheetName = workbook.SheetNames[0];
@@ -699,9 +773,7 @@
                         for (let i = 4; i < json.length; i++) {
                             const row = json[i];
                             if (row[0] && row[0].toString().startsWith('Tract:')) {
-                                if (currentTract) {
-                                    newProject.tracts.push(currentTract);
-                                }
+                                if (currentTract) newProject.tracts.push(currentTract);
                                 currentTract = {
                                     id: generateId(),
                                     name: row[0].toString().replace('Tract: ', '').trim(),
@@ -710,8 +782,7 @@
                                     owners: []
                                 };
                             } else if (currentTract && row[0] && !row[0].toString().startsWith('Tract:') && row[0] !== 'Owner' && row[0] !== 'Unit-Level Owner Totals' && row[0] !== 'Totals:') {
-                                // This is an owner row
-                                if(row.length > 1) { // Make sure it's not an empty row
+                                if(row.length > 1) { 
                                     currentTract.owners.push({
                                         id: generateId(),
                                         name: row[0] || '',
@@ -723,11 +794,11 @@
                                 }
                             }
                         }
-                        if (currentTract) {
-                            newProject.tracts.push(currentTract);
-                        }
+                        if (currentTract) newProject.tracts.push(currentTract);
 
-                        setProjects(p => ({...p, [newProject.id]: newProject}));
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                        const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
+                        await window.firebase.setDoc(projectRef, newProject);
                         setActiveProjectId(newProject.id);
 
                     } catch (err) {
@@ -741,8 +812,21 @@
 
 
             // --- Render ---
+            if (isLoading) {
+                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Loading Database...</p></div>;
+            }
+            
             if (!activeProject) {
-                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Loading projects...</p></div>;
+                return (
+                    <div className="bg-slate-50 min-h-screen flex items-center justify-center">
+                        <div className="text-center">
+                            <p className="mb-4">No projects found. Create your first project to begin.</p>
+                            <button onClick={handleNewProject} className="flex items-center justify-center gap-2 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600">
+                                <PlusCircleIcon /> Create New Project
+                            </button>
+                        </div>
+                    </div>
+                );
             }
 
             const isUnitAcresManual = activeProject.unitAcresOverride !== null;
