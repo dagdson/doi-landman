@@ -265,13 +265,7 @@
             // --- Firebase Initialization ---
             React.useEffect(() => {
                 // STEP 1: PASTE YOUR FIREBASE CONFIG OBJECT HERE
-                // Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-const firebaseConfig = {
+                const firebaseConfig = {
   apiKey: "AIzaSyBqv3PjYUomTNar3wGwsp5ltKvmhxanHJc",
   authDomain: "landman-doi-calculator.firebaseapp.com",
   projectId: "landman-doi-calculator",
@@ -279,9 +273,6 @@ const firebaseConfig = {
   messagingSenderId: "257746559512",
   appId: "1:257746559512:web:aafa3c105602b023d7596d"
 };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
 
                 // Check if firebaseConfig is populated
                 if (!firebaseConfig.apiKey) {
@@ -525,14 +516,6 @@ const app = initializeApp(firebaseConfig);
                 };
             }, [activeProject]);
 
-            // --- Firestore Data Handlers ---
-            const updateProjectInDb = async (updatedProject) => {
-                if (!db || !userId || !updatedProject) return;
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${updatedProject.id}`);
-                await window.firebase.setDoc(projectRef, updatedProject, { merge: true });
-            };
-            
             // --- Project Handlers ---
             const handleNewProject = async () => {
                 if (!db || !userId) return;
