@@ -16,54 +16,43 @@
     
     <!-- 4. Load Firebase SDKs -->
     <script type="module">
+        // IMPORTANT: These scripts are now modules to support Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { 
-            getAuth, 
-            onAuthStateChanged,
-            createUserWithEmailAndPassword,
-            signInWithEmailAndPassword,
-            signOut,
-            setPersistence, // <-- ADDED FOR SESSION STORAGE
-            browserSessionPersistence // <-- ADDED FOR SESSION STORAGE
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, 
-            doc, 
-            setDoc, 
-            deleteDoc, 
-            onSnapshot, 
-            collection
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, deleteDoc, onSnapshot, collection, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Expose Firebase modules to the global window object so Babel can see them
         window.firebase = {
             initializeApp,
             getAuth,
-            onAuthStateChanged,
-            createUserWithEmailAndPassword,
-            signInWithEmailAndPassword,
-            signOut,
-            setPersistence, // <-- ADDED FOR SESSION STORAGE
-            browserSessionPersistence, // <-- ADDED FOR SESSION STORAGE
+            signInAnonymously,
+            signInWithCustomToken,
             getFirestore,
             doc,
+            getDoc,
             setDoc,
             deleteDoc,
             onSnapshot,
-            collection
+            collection,
+            writeBatch
         };
     </script>
 </head>
 <body>
+    <!-- This is where our React app will be rendered -->
     <div id="root"></div>
 
+    <!-- 5. Our React application code, now inside a special script tag -->
     <script type="text/babel">
         // --- Helper Functions ---
         const formatInterest = (num, places = 8) => {
             const parsedNum = parseFloat(num);
-            if (isNaN(parsedNum)) return (0).toFixed(places);
+            if (isNaN(parsedNum)) {
+                return (0).toFixed(places);
+            }
             return parsedNum.toFixed(places);
         };
+
         const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         // --- SVG Icon Components ---
@@ -79,76 +68,176 @@
         const XCircleIcon = ({ size = 20 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>;
         const ClipboardIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>;
         const Trash2Icon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>;
-        const LogOutIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>;
+
 
         // --- Initial State & Data Structures ---
-        const createNewOwner = () => ({ id: generateId(), name: 'New Owner', interestType: 'WI', interest: 1.0, mineralInterest: 1.0, burdenGroup: 'Lease A' });
-        const createNewProject = () => ({ id: generateId(), projectName: 'New DOI Project', unitAcresOverride: null, tracts: [{ id: generateId(), name: 'Tract 1', grossAcres: 640, isExpanded: true, owners: [{ id: generateId(), name: 'WI Owner A', interestType: 'WI', interest: 0.5, mineralInterest: 1.0, burdenGroup: 'Lease A' },{ id: generateId(), name: 'WI Owner B', interestType: 'WI', interest: 0.5, mineralInterest: 1.0, burdenGroup: 'Lease A' },{ id: generateId(), name: 'Royalty Owner A', interestType: 'RI', interest: 0.25, mineralInterest: 1.0, burdenGroup: 'Lease A' }] }] });
+        const createNewOwner = () => ({
+            id: generateId(),
+            name: 'New Owner',
+            interestType: 'WI',
+            interest: 1.0,
+            mineralInterest: 1.0,
+            burdenGroup: 'Lease A',
+        });
+
+        const createNewProject = () => ({
+            id: generateId(),
+            projectName: 'New DOI Project',
+            unitAcresOverride: null,
+            tracts: [{
+                id: generateId(),
+                name: 'Tract 1',
+                grossAcres: 640,
+                isExpanded: true,
+                owners: [
+                    { id: generateId(), name: 'WI Owner A', interestType: 'WI', interest: 0.5, mineralInterest: 1.0, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'WI Owner B', interestType: 'WI', interest: 0.5, mineralInterest: 1.0, burdenGroup: 'Lease A' },
+                    { id: generateId(), name: 'Royalty Owner A', interestType: 'RI', interest: 0.25, mineralInterest: 1.0, burdenGroup: 'Lease A' },
+                ],
+            }],
+        });
 
         // --- Child Component Definitions ---
+
         const OwnerComponent = ({ tract, owner, onUpdateOwner, onRemoveOwner }) => {
             const showMineralInterest = owner.interestType === 'RI' || owner.interestType === 'Unleased';
             const isUnleased = owner.interestType === 'Unleased';
-            return (<div className="grid grid-cols-12 gap-4 p-3 pl-4 items-center border-t border-slate-100 hover:bg-blue-50/30 group"><div className="col-span-2"><input type="text" value={owner.name} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'name', e.target.value)} className="w-full p-1 rounded-md bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500" /></div><div className="col-span-1"><select value={owner.interestType} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'interestType', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 bg-white"><option>WI</option><option>RI</option><option>ORRI</option><option>NPRI</option><option>Unleased</option></select></div><div className="col-span-1"><input type="text" value={owner.burdenGroup} disabled={isUnleased} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'burdenGroup', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" placeholder={isUnleased ? 'N/A' : 'e.g., Lease A'} /></div><div className="col-span-1"><input type="number" step="0.00000001" value={owner.interest} disabled={isUnleased} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'interest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" /></div><div className="col-span-1">{showMineralInterest && <input type="number" step="0.00000001" value={owner.mineralInterest} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'mineralInterest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500" />}</div><div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractWI}</div><div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractNRI}</div><div className="col-span-2 font-mono text-sm text-right text-slate-700">{owner.calculated.unitWI}</div><div className="col-span-2 flex items-center justify-end"><span className="font-mono text-sm text-right font-semibold text-teal-700">{owner.calculated.unitNRI}</span><button onClick={() => onRemoveOwner(tract.id, owner.id)} className="ml-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><XCircleIcon size={16} /></button></div></div>);
+
+            return (
+                <div className="grid grid-cols-12 gap-4 p-3 pl-4 items-center border-t border-slate-100 hover:bg-blue-50/30 group">
+                    <div className="col-span-2">
+                        <input type="text" value={owner.name} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'name', e.target.value)} className="w-full p-1 rounded-md bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div className="col-span-1">
+                        <select value={owner.interestType} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'interestType', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 bg-white">
+                            <option>WI</option>
+                            <option>RI</option>
+                            <option>ORRI</option>
+                            <option>NPRI</option>
+                            <option>Unleased</option>
+                        </select>
+                    </div>
+                    <div className="col-span-1">
+                         <input type="text" value={owner.burdenGroup} disabled={isUnleased} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'burdenGroup', e.target.value)} className="w-full p-1 rounded-md text-sm border-gray-300 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" placeholder={isUnleased ? 'N/A' : 'e.g., Lease A'} />
+                    </div>
+                    <div className="col-span-1">
+                        <input type="number" step="0.00000001" value={owner.interest} disabled={isUnleased} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'interest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500" />
+                    </div>
+                    <div className="col-span-1">
+                        {showMineralInterest && <input type="number" step="0.00000001" value={owner.mineralInterest} onChange={(e) => onUpdateOwner(tract.id, owner.id, 'mineralInterest', e.target.value)} className="w-full p-1 rounded-md bg-transparent text-right focus:bg-white focus:ring-1 focus:ring-blue-500" />}
+                    </div>
+                    <div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractWI}</div>
+                    <div className="col-span-1 font-mono text-sm text-right text-slate-700">{owner.calculated.tractNRI}</div>
+                    <div className="col-span-2 font-mono text-sm text-right text-slate-700">{owner.calculated.unitWI}</div>
+                    <div className="col-span-2 flex items-center justify-end">
+                        <span className="font-mono text-sm text-right font-semibold text-teal-700">{owner.calculated.unitNRI}</span>
+                        <button onClick={() => onRemoveOwner(tract.id, owner.id)} className="ml-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><XCircleIcon size={16} /></button>
+                    </div>
+                </div>
+            );
         };
-        const TractComponent = ({ tract, onUpdateTract, onToggleTract, onRemoveTract, onDuplicateTract, onUpdateOwner, onAddOwner, onRemoveOwner, onOpenPasteModal }) => (<div className="border-b border-slate-200 last:border-b-0"><div className="grid grid-cols-12 gap-4 p-3 bg-slate-50 items-center"><div className="col-span-5 flex items-center"><button onClick={() => onToggleTract(tract.id)} className="mr-2 text-slate-500 hover:text-slate-800">{tract.isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}</button><input type="text" value={tract.name} onChange={(e) => onUpdateTract(tract.id, 'name', e.target.value)} className="font-bold bg-transparent p-1 -ml-1 rounded-md w-full focus:bg-white focus:ring-1 focus:ring-blue-500" /></div><div className="col-span-5"><div className="flex items-center"><input type="number" value={tract.grossAcres} onChange={(e) => onUpdateTract(tract.id, 'grossAcres', e.target.value)} className="w-full text-right bg-transparent p-1 rounded-md focus:bg-white focus:ring-1 focus:ring-blue-500" /><span className="text-xs text-slate-500 ml-1">Acres</span></div></div><div className="col-span-2 flex justify-end gap-2"><button onClick={() => onDuplicateTract(tract.id)} className="text-blue-500 hover:text-blue-700 transition-colors"><CopyIcon /></button><button onClick={() => onRemoveTract(tract.id)} className="text-red-500 hover:text-red-700 transition-colors"><XCircleIcon /></button></div></div>{tract.isExpanded && (<div><div className="overflow-x-auto"><div className="min-w-[1100px]">{tract.owners.map(owner => <OwnerComponent key={owner.id} tract={tract} owner={owner} onUpdateOwner={onUpdateOwner} onRemoveOwner={onRemoveOwner} />)}</div></div><div className="grid grid-cols-12 gap-4 p-4 items-center border-t-2 border-slate-200 bg-slate-50"><div className="col-span-6 font-bold text-slate-700 text-right pr-4">Tract Totals:</div><div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isWIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractWI}</div><div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isNRIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractNRI}</div><div className="col-span-4"></div></div><div className="p-2 flex justify-start pl-4 gap-4"><button onClick={() => onAddOwner(tract.id)} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 font-semibold"><PlusCircleIcon size={16} /> Add Owner Interest</button><button onClick={() => onOpenPasteModal(tract.id)} className="flex items-center gap-1 text-sm text-green-600 hover:text-green-800 font-semibold"><ClipboardIcon /> Paste from Sheet</button></div></div>)}</div>);
+
+        const TractComponent = ({ tract, onUpdateTract, onToggleTract, onRemoveTract, onDuplicateTract, onUpdateOwner, onAddOwner, onRemoveOwner, onOpenPasteModal }) => (
+            <div className="border-b border-slate-200 last:border-b-0">
+                <div className="grid grid-cols-12 gap-4 p-3 bg-slate-50 items-center">
+                    <div className="col-span-5 flex items-center">
+                        <button onClick={() => onToggleTract(tract.id)} className="mr-2 text-slate-500 hover:text-slate-800">{tract.isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}</button>
+                        <input type="text" value={tract.name} onChange={(e) => onUpdateTract(tract.id, 'name', e.target.value)} className="font-bold bg-transparent p-1 -ml-1 rounded-md w-full focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                    <div className="col-span-5">
+                        <div className="flex items-center">
+                            <input type="number" value={tract.grossAcres} onChange={(e) => onUpdateTract(tract.id, 'grossAcres', e.target.value)} className="w-full text-right bg-transparent p-1 rounded-md focus:bg-white focus:ring-1 focus:ring-blue-500" />
+                            <span className="text-xs text-slate-500 ml-1">Acres</span>
+                        </div>
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                        <button onClick={() => onDuplicateTract(tract.id)} className="text-blue-500 hover:text-blue-700 transition-colors"><CopyIcon /></button>
+                        <button onClick={() => onRemoveTract(tract.id)} className="text-red-500 hover:text-red-700 transition-colors"><XCircleIcon /></button>
+                    </div>
+                </div>
+                {tract.isExpanded && (
+                    <div>
+                        <div className="overflow-x-auto">
+                            <div className="min-w-[1100px]">
+                                {tract.owners.map(owner => <OwnerComponent key={owner.id} tract={tract} owner={owner} onUpdateOwner={onUpdateOwner} onRemoveOwner={onRemoveOwner} />)}
+                            </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-12 gap-4 p-4 items-center border-t-2 border-slate-200 bg-slate-50">
+                            <div className="col-span-6 font-bold text-slate-700 text-right pr-4">Tract Totals:</div>
+                            <div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isWIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractWI}</div>
+                            <div className={`col-span-1 font-mono text-sm text-right font-bold ${tract.subtotals.isNRIBalanced ? 'text-green-600' : 'text-red-600'}`}>{tract.subtotals.tractNRI}</div>
+                            <div className="col-span-4"></div>
+                        </div>
+
+                        <div className="p-2 flex justify-start pl-4 gap-4">
+                            <button onClick={() => onAddOwner(tract.id)} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 font-semibold"><PlusCircleIcon size={16} /> Add Owner Interest</button>
+                            <button onClick={() => onOpenPasteModal(tract.id)} className="flex items-center gap-1 text-sm text-green-600 hover:text-green-800 font-semibold"><ClipboardIcon /> Paste from Sheet</button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+
         const PasteDataModal = ({ tract, onPaste, onClose }) => {
             const [pastedText, setPastedText] = React.useState('');
             const [columns, setColumns] = React.useState([{ id: 'name', name: 'Owner', type: 'text' }]);
-            const availableColumns = [{ id: 'interestType', name: 'Interest Type', type: 'text' },{ id: 'burdenGroup', name: 'Burden Group', type: 'text' },{ id: 'interest', name: 'Interest', type: 'number' },{ id: 'mineralInterest', name: 'Mineral %', type: 'number' }];
+
+            const availableColumns = [
+                { id: 'interestType', name: 'Interest Type', type: 'text' },
+                { id: 'burdenGroup', name: 'Burden Group', type: 'text' },
+                { id: 'interest', name: 'Interest', type: 'number' },
+                { id: 'mineralInterest', name: 'Mineral %', type: 'number' },
+            ];
+
             const handleColumnToggle = (columnId) => {
                 const isSelected = columns.find(c => c.id === columnId);
-                if (isSelected) { setColumns(columns.filter(c => c.id !== columnId)); } 
-                else { const column = availableColumns.find(c => c.id === columnId); const newColumns = [...columns, column]; const orderedIds = ['name', ...availableColumns.map(c => c.id)]; newColumns.sort((a,b) => orderedIds.indexOf(a.id) - orderedIds.indexOf(b.id)); setColumns(newColumns); }
-            };
-            const handleSubmit = () => { onPaste(tract.id, pastedText, columns); };
-            return (<div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={onClose}><div className="bg-white rounded-lg shadow-xl w-full max-w-2xl" onClick={e => e.stopPropagation()}><div className="p-4 border-b"><h2 className="text-xl font-bold">Paste Spreadsheet Data for {tract.name}</h2></div><div className="p-4"><p className="text-sm text-slate-600 mb-2">Select the columns you are pasting from your spreadsheet. The tool will add new owners or update existing ones based on the owner's name.</p><div className="flex flex-wrap gap-2 mb-4"><span className="p-2 bg-blue-100 text-blue-800 rounded-md text-sm font-semibold">Owner</span>{availableColumns.map(col => (<label key={col.id} className="flex items-center gap-2 p-2 bg-slate-100 rounded-md cursor-pointer hover:bg-slate-200"><input type="checkbox" checked={columns.some(c => c.id === col.id)} onChange={() => handleColumnToggle(col.id)} />{col.name}</label>))}</div><textarea value={pastedText} onChange={(e) => setPastedText(e.target.value)} className="w-full h-48 p-2 border border-slate-300 rounded-md shadow-inner bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" placeholder={`Paste your data here. The tool expects columns in this order:\n${columns.map(c => c.name).join(' | ')}`} /></div><div className="p-4 border-t flex justify-end gap-4"><button onClick={onClose} className="bg-slate-200 text-slate-800 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 transition-all">Cancel</button><button onClick={handleSubmit} className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all">Process Pasted Data</button></div></div></div>);
-        };
-        
-        // --- Authentication Component ---
-        const AuthComponent = ({ auth }) => {
-            const [isSignUp, setIsSignUp] = React.useState(false);
-            const [email, setEmail] = React.useState('');
-            const [password, setPassword] = React.useState('');
-            const [error, setError] = React.useState('');
-
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                setError('');
-                try {
-                    if (isSignUp) {
-                        await window.firebase.createUserWithEmailAndPassword(auth, email, password);
-                    } else {
-                        await window.firebase.signInWithEmailAndPassword(auth, email, password);
-                    }
-                } catch (err) {
-                    setError(err.message);
+                if (isSelected) {
+                    setColumns(columns.filter(c => c.id !== columnId));
+                } else {
+                    const column = availableColumns.find(c => c.id === columnId);
+                    const newColumns = [...columns, column];
+                    // Maintain a logical order
+                    const orderedIds = ['name', ...availableColumns.map(c => c.id)];
+                    newColumns.sort((a,b) => orderedIds.indexOf(a.id) - orderedIds.indexOf(b.id));
+                    setColumns(newColumns);
                 }
             };
 
+            const handleSubmit = () => {
+                onPaste(tract.id, pastedText, columns);
+            };
+
             return (
-                <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center">
-                    <div className="max-w-md w-full bg-white p-8 rounded-lg shadow-md">
-                        <h2 className="text-2xl font-bold text-center mb-6">{isSignUp ? 'Create Account' : 'Sign In'}</h2>
-                        <form onSubmit={handleSubmit}>
-                            <div className="mb-4">
-                                <label className="block text-slate-700 text-sm font-bold mb-2" htmlFor="email">Email</label>
-                                <input type="email" id="email" value={email} onChange={(e) => setEmail(e.target.value)} className="shadow appearance-none border rounded w-full py-2 px-3 text-slate-700 leading-tight focus:outline-none focus:shadow-outline" required />
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={onClose}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b">
+                            <h2 className="text-xl font-bold">Paste Spreadsheet Data for {tract.name}</h2>
+                        </div>
+                        <div className="p-4">
+                            <p className="text-sm text-slate-600 mb-2">Select the columns you are pasting from your spreadsheet. The tool will add new owners or update existing ones based on the owner's name.</p>
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="p-2 bg-blue-100 text-blue-800 rounded-md text-sm font-semibold">Owner</span>
+                                {availableColumns.map(col => (
+                                     <label key={col.id} className="flex items-center gap-2 p-2 bg-slate-100 rounded-md cursor-pointer hover:bg-slate-200">
+                                         <input type="checkbox" checked={columns.some(c => c.id === col.id)} onChange={() => handleColumnToggle(col.id)} />
+                                         {col.name}
+                                     </label>
+                                ))}
                             </div>
-                            <div className="mb-6">
-                                <label className="block text-slate-700 text-sm font-bold mb-2" htmlFor="password">Password</label>
-                                <input type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} className="shadow appearance-none border rounded w-full py-2 px-3 text-slate-700 mb-3 leading-tight focus:outline-none focus:shadow-outline" required />
-                            </div>
-                            {error && <p className="text-red-500 text-xs italic mb-4">{error}</p>}
-                            <div className="flex items-center justify-between">
-                                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
-                                    {isSignUp ? 'Sign Up' : 'Sign In'}
-                                </button>
-                                <a href="#" onClick={() => setIsSignUp(!isSignUp)} className="inline-block align-baseline font-bold text-sm text-blue-600 hover:text-blue-800">
-                                    {isSignUp ? 'Already have an account?' : 'Create an account'}
-                                </a>
-                            </div>
-                        </form>
+                            <textarea
+                                value={pastedText}
+                                onChange={(e) => setPastedText(e.target.value)}
+                                className="w-full h-48 p-2 border border-slate-300 rounded-md shadow-inner bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                                placeholder={`Paste your data here. The tool expects columns in this order:\n${columns.map(c => c.name).join(' | ')}`}
+                            />
+                        </div>
+                        <div className="p-4 border-t flex justify-end gap-4">
+                            <button onClick={onClose} className="bg-slate-200 text-slate-800 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 transition-all">Cancel</button>
+                            <button onClick={handleSubmit} className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all">
+                                Process Pasted Data
+                            </button>
+                        </div>
                     </div>
                 </div>
             );
@@ -159,7 +248,7 @@
             // --- Firebase State ---
             const [db, setDb] = React.useState(null);
             const [auth, setAuth] = React.useState(null);
-            const [user, setUser] = React.useState(null);
+            const [userId, setUserId] = React.useState(null);
             const [isLoading, setIsLoading] = React.useState(true);
 
             // --- App State ---
@@ -175,6 +264,7 @@
             
             // --- Firebase Initialization ---
             React.useEffect(() => {
+                // STEP 1: PASTE YOUR FIREBASE CONFIG OBJECT HERE
                 const firebaseConfig = {
   apiKey: "AIzaSyBqv3PjYUomTNar3wGwsp5ltKvmhxanHJc",
   authDomain: "landman-doi-calculator.firebaseapp.com",
@@ -184,35 +274,47 @@
   appId: "1:257746559512:web:aafa3c105602b023d7596d"
 };
 
+                // Check if firebaseConfig is populated
+                if (!firebaseConfig.apiKey) {
+                    console.warn("Firebase config is missing. Please paste it into the index.html file.");
+                    setIsLoading(false);
+                    // Fallback to local storage or a default state if Firebase is not configured
+                    const newProject = createNewProject();
+                    setProjects({ [newProject.id]: newProject });
+                    setActiveProjectId(newProject.id);
+                    return;
+                }
+
                 const app = window.firebase.initializeApp(firebaseConfig);
                 const authInstance = window.firebase.getAuth(app);
                 const dbInstance = window.firebase.getFirestore(app);
 
-                window.firebase.setPersistence(authInstance, window.firebase.browserSessionPersistence)
-                    .catch((error) => {
-                        console.error("Error setting auth persistence:", error);
-                    });
-                
-                const unsubscribe = window.firebase.onAuthStateChanged(authInstance, (user) => {
-                    setUser(user);
-                    setAuth(authInstance);
-                    setDb(dbInstance);
-                    setIsLoading(false);
-                });
+                setAuth(authInstance);
+                setDb(dbInstance);
 
-                return () => unsubscribe();
+                const authenticateUser = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await window.firebase.signInWithCustomToken(authInstance, __initial_auth_token);
+                        } else {
+                            await window.firebase.signInAnonymously(authInstance);
+                        }
+                        setUserId(authInstance.currentUser.uid);
+                    } catch (error) {
+                        console.error("Firebase authentication failed:", error);
+                        setIsLoading(false);
+                    }
+                };
+
+                authenticateUser();
             }, []);
 
             // --- Firebase Data Listener ---
             React.useEffect(() => {
-                if (!db || !user) {
-                    setProjects({});
-                    setActiveProjectId(null);
-                    return;
-                };
+                if (!db || !userId) return;
 
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectsCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${user.uid}/projects`);
+                const projectsCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${userId}/projects`);
 
                 const unsubscribe = window.firebase.onSnapshot(projectsCollectionRef, (snapshot) => {
                     const fetchedProjects = {};
@@ -226,12 +328,17 @@
                             setActiveProjectId(Object.keys(fetchedProjects)[0]);
                         }
                     } else {
-                        handleNewProject(true); // Create first project automatically
+                        // If no projects in DB, create a new one
+                        const newProject = createNewProject();
+                        const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
+                        window.firebase.setDoc(projectRef, newProject);
+                        // The listener will pick up this change and set state
                     }
+                    setIsLoading(false);
                 });
 
-                return () => unsubscribe();
-            }, [db, user]);
+                return () => unsubscribe(); // Cleanup listener on component unmount
+            }, [db, userId]);
 
 
             // --- Core Calculation Logic ---
@@ -267,25 +374,44 @@
 
                     const groupAggregates = new Map();
                     
+                    // First pass: aggregate burdens and mineral interests by group
                     tract.owners.forEach(owner => {
                         const groupName = String(owner.burdenGroup || '').trim();
                         if (!groupName || owner.interestType === 'Unleased') return;
+
                         if (!groupAggregates.has(groupName)) {
-                            groupAggregates.set(groupName, { leasedMineralInterest: 0, totalWIInterest: 0, totalRoyaltyBurden: 0, totalOrriInterest: 0, totalNpriInterest: 0 });
+                            groupAggregates.set(groupName, { 
+                                leasedMineralInterest: 0,
+                                totalWIInterest: 0,
+                                totalRoyaltyBurden: 0, 
+                                totalOrriInterest: 0, 
+                                totalNpriInterest: 0 
+                            });
                         }
+                        
                         const aggregate = groupAggregates.get(groupName);
                         const interest = parseFloat(owner.interest) || 0;
                         const mineralInterest = parseFloat(owner.mineralInterest) || 0;
-                        if (owner.interestType === 'RI') { aggregate.leasedMineralInterest += mineralInterest; aggregate.totalRoyaltyBurden += interest * mineralInterest; } 
-                        else if (owner.interestType === 'WI') { aggregate.totalWIInterest += interest; } 
-                        else if (owner.interestType === 'ORRI') { aggregate.totalOrriInterest += interest; } 
-                        else if (owner.interestType === 'NPRI') { aggregate.totalNpriInterest += interest; }
+
+                        if (owner.interestType === 'RI') {
+                            aggregate.leasedMineralInterest += mineralInterest;
+                            aggregate.totalRoyaltyBurden += interest * mineralInterest;
+                        } else if (owner.interestType === 'WI') {
+                            aggregate.totalWIInterest += interest;
+                        } else if (owner.interestType === 'ORRI') {
+                            aggregate.totalOrriInterest += interest;
+                        } else if (owner.interestType === 'NPRI') {
+                            aggregate.totalNpriInterest += interest;
+                        }
                     });
 
+                    // Second pass: calculate each owner's interest
                     const processedOwners = tract.owners.map(owner => {
                         const interest = parseFloat(owner.interest) || 0;
                         const mineralInterest = parseFloat(owner.mineralInterest) || 0;
-                        let tractNRI = 0, tractWI = 0;
+                        
+                        let tractNRI = 0;
+                        let tractWI = 0;
 
                         if (owner.interestType === 'Unleased') {
                             tractNRI = mineralInterest;
@@ -298,11 +424,15 @@
                                     case 'WI':
                                         const leaseNRI = aggregate.leasedMineralInterest - aggregate.totalRoyaltyBurden - (aggregate.totalOrriInterest * aggregate.leasedMineralInterest);
                                         tractWI = interest * aggregate.leasedMineralInterest;
-                                        if (aggregate.totalWIInterest > 0) { tractNRI = leaseNRI * (interest / aggregate.totalWIInterest); }
+                                        if (aggregate.totalWIInterest > 0) {
+                                            tractNRI = leaseNRI * (interest / aggregate.totalWIInterest);
+                                        }
                                         break;
                                     case 'RI':
                                         let proportionalNpriBurden = 0;
-                                        if (aggregate.leasedMineralInterest > 0) { proportionalNpriBurden = aggregate.totalNpriInterest * (mineralInterest / aggregate.leasedMineralInterest); }
+                                        if (aggregate.leasedMineralInterest > 0) {
+                                            proportionalNpriBurden = aggregate.totalNpriInterest * (mineralInterest / aggregate.leasedMineralInterest);
+                                        }
                                         tractNRI = (interest * mineralInterest) - proportionalNpriBurden;
                                         break;
                                     case 'ORRI':
@@ -318,6 +448,7 @@
                         
                         const unitWI = tractWI * tractFactor;
                         const unitNRI = tractNRI * tractFactor;
+
                         const ownerName = owner.name.trim();
                         if (ownerName) {
                             const summary = ownerSummary.get(ownerName) || { totalWI: 0, totalNRI: 0, nriFromWI: 0, nriFromRI: 0, nriFromORRI: 0, nriFromNPRI: 0 };
@@ -329,15 +460,32 @@
                             if (owner.interestType === 'NPRI') summary.nriFromNPRI += unitNRI;
                             ownerSummary.set(ownerName, summary);
                         }
-                        return { ...owner, calculated: { tractNRI: formatInterest(tractNRI), unitNRI: formatInterest(unitNRI), tractWI: formatInterest(tractWI), unitWI: formatInterest(unitWI) }};
+
+                        return { ...owner, calculated: { 
+                            tractNRI: formatInterest(tractNRI), 
+                            unitNRI: formatInterest(unitNRI), 
+                            tractWI: formatInterest(tractWI), 
+                            unitWI: formatInterest(unitWI) 
+                        }};
                     });
                     
                     const subtotalTractNRI = processedOwners.reduce((sum, owner) => sum + parseFloat(owner.calculated.tractNRI || 0), 0);
                     const subtotalTractWI = processedOwners.reduce((sum, owner) => sum + parseFloat(owner.calculated.tractWI || 0), 0);
-                    return { ...tract, owners: processedOwners, subtotals: { tractNRI: formatInterest(subtotalTractNRI), isNRIBalanced: Math.abs(subtotalTractNRI - 1.0) < 1e-8, tractWI: formatInterest(subtotalTractWI), isWIBalanced: Math.abs(subtotalTractWI - 1.0) < 1e-8 } };
+
+                    return { 
+                        ...tract, 
+                        owners: processedOwners, 
+                        subtotals: { 
+                            tractNRI: formatInterest(subtotalTractNRI), 
+                            isNRIBalanced: Math.abs(subtotalTractNRI - 1.0) < 1e-8,
+                            tractWI: formatInterest(subtotalTractWI),
+                            isWIBalanced: Math.abs(subtotalTractWI - 1.0) < 1e-8,
+                        } 
+                    };
                 });
 
                 const ownerTotals = Array.from(ownerSummary.entries()).map(([name, totals]) => ({ name, ...totals })).sort((a,b) => a.name.localeCompare(b.name));
+
                 const summaryTotals = { totalWI: 0, totalNRI: 0, nriFromWI: 0, nriFromRI: 0, nriFromORRI: 0, nriFromNPRI: 0 };
                 ownerTotals.forEach(ot => {
                     summaryTotals.totalWI += ot.totalWI;
@@ -368,25 +516,15 @@
                 };
             }, [activeProject]);
 
-            // --- Firestore Data Handlers ---
-            const updateProjectInDb = async (updatedProject) => {
-                if (!db || !user || !updatedProject) return;
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/projects/${updatedProject.id}`);
-                await window.firebase.setDoc(projectRef, updatedProject, { merge: true });
-            };
-            
             // --- Project Handlers ---
-            const handleNewProject = async (isFirstProject = false) => {
-                if (!db || !user) return;
+            const handleNewProject = async () => {
+                if (!db || !userId) return;
                 const newProject = createNewProject();
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/projects/${newProject.id}`);
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
                 await window.firebase.setDoc(projectRef, newProject);
-                if (!isFirstProject) {
-                    setActiveProjectId(newProject.id);
-                    setIsProjectsModalOpen(false);
-                }
+                setActiveProjectId(newProject.id);
+                setIsProjectsModalOpen(false);
             };
 
             const handleLoadProject = (projectId) => {
@@ -395,17 +533,18 @@
             };
 
             const handleDeleteProject = async (projectId) => {
-                if (!db || !user || Object.keys(projects).length <= 1) {
+                if (!db || !userId || Object.keys(projects).length <= 1) {
                     alert("You cannot delete the last project.");
                     return;
                 }
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/projects/${projectId}`);
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${projectId}`);
                 await window.firebase.deleteDoc(projectRef);
+                // The realtime listener will handle updating the state
             };
 
             const handleDuplicateProject = async (projectId) => {
-                if (!db || !user) return;
+                if (!db || !userId) return;
                 const projectToDuplicate = projects[projectId];
                 if (!projectToDuplicate) return;
 
@@ -418,7 +557,7 @@
                 });
 
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/projects/${newProject.id}`);
+                const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
                 await window.firebase.setDoc(projectRef, newProject);
                 setActiveProjectId(newProject.id);
                 setIsProjectsModalOpen(false);
@@ -426,7 +565,7 @@
 
             // --- State Update Handlers (now they also update Firestore) ---
             const setProjectStateAndDb = (updater) => {
-                if (!activeProjectId || !projects[activeProjectId]) return;
+                if (!activeProjectId) return;
                 const updatedProject = updater(projects[activeProjectId]);
                 setProjects(prev => ({ ...prev, [activeProjectId]: updatedProject }));
                 updateProjectInDb(updatedProject);
@@ -454,12 +593,16 @@
                 setProjectStateAndDb(p => {
                     const tractToDuplicate = p.tracts.find(t => t.id === tractId);
                     if (!tractToDuplicate) return p;
+
                     const newTract = JSON.parse(JSON.stringify(tractToDuplicate));
-                    newTract.id = generateId(); newTract.name = `${tractToDuplicate.name} - Copy`;
+                    newTract.id = generateId();
+                    newTract.name = `${tractToDuplicate.name} - Copy`;
                     newTract.owners.forEach(owner => owner.id = generateId());
+
                     const originalIndex = p.tracts.findIndex(t => t.id === tractId);
                     const newTracts = [...p.tracts];
                     newTracts.splice(originalIndex + 1, 0, newTract);
+                    
                     return {...p, tracts: newTracts };
                 });
             };
@@ -501,13 +644,17 @@
                     rows.forEach(cells => {
                         const ownerName = cells[0]?.trim();
                         if (!ownerName) return;
+
                         const existingOwnerIndex = updatedOwners.findIndex(o => o.name.trim().toLowerCase() === ownerName.toLowerCase());
                         const dataColumns = columnsToUpdate.slice(1); 
+
                         if (existingOwnerIndex !== -1) {
                             const ownerToUpdate = { ...updatedOwners[existingOwnerIndex] };
                             dataColumns.forEach((col, index) => {
                                 const newValue = cells[index + 1];
-                                if (newValue !== undefined) { ownerToUpdate[col.id] = (col.type === 'number') ? parseFloat(newValue) || ownerToUpdate[col.id] : newValue; }
+                                if (newValue !== undefined) {
+                                    ownerToUpdate[col.id] = (col.type === 'number') ? parseFloat(newValue) || ownerToUpdate[col.id] : newValue;
+                                }
                             });
                             updatedOwners[existingOwnerIndex] = ownerToUpdate;
                         } else {
@@ -515,7 +662,9 @@
                             newOwner.name = ownerName;
                             dataColumns.forEach((col, index) => {
                                  const newValue = cells[index + 1];
-                                 if (newValue !== undefined) { newOwner[col.id] = (col.type === 'number') ? parseFloat(newValue) || newOwner[col.id] : newValue; }
+                                 if (newValue !== undefined) {
+                                    newOwner[col.id] = (col.type === 'number') ? parseFloat(newValue) || newOwner[col.id] : newValue;
+                                }
                             });
                             updatedOwners.push(newOwner);
                         }
@@ -523,31 +672,50 @@
 
                     const newTracts = [...p.tracts];
                     newTracts[tractIndex] = {...currentTract, owners: updatedOwners};
+                    
                     return { ...p, tracts: newTracts };
                 });
+
                 setPasteModalInfo({ isOpen: false, tractId: null });
             };
 
             const exportToXLSX = React.useCallback(() => {
                 if (!activeProject || typeof XLSX === 'undefined') return;
+                
                 const workbook = XLSX.utils.book_new();
                 const worksheetData = [];
                 const { projectName } = activeProject;
                 const { unitAcres } = calculatedData.totals;
+
                 worksheetData.push([projectName]);
                 worksheetData.push([`Unit Acres:`, unitAcres]);
                 worksheetData.push([`Total Unit NRI:`, calculatedData.totals.unitNRI]);
                 worksheetData.push([]); 
+
                 const header = ['Owner', 'Interest Type', 'Burden Group', 'Interest', 'Mineral %', 'Tract WI', 'Tract NRI', 'Unit WI', 'Unit NRI'];
                 worksheetData.push(header);
+
                 calculatedData.tracts.forEach(tract => {
                     worksheetData.push([`Tract: ${tract.name}`, `Gross Acres: ${tract.grossAcres}`]);
+                    
                     tract.owners.forEach(owner => {
-                        worksheetData.push([owner.name, owner.interestType, owner.burdenGroup, parseFloat(owner.interest), (owner.interestType === 'RI' || owner.interestType === 'Unleased') ? parseFloat(owner.mineralInterest) : '', parseFloat(owner.calculated.tractWI), parseFloat(owner.calculated.tractNRI), parseFloat(formatInterest(owner.calculated.unitWI)), parseFloat(formatInterest(owner.calculated.unitNRI))]);
+                        worksheetData.push([
+                            owner.name,
+                            owner.interestType,
+                            owner.burdenGroup,
+                            parseFloat(owner.interest),
+                            (owner.interestType === 'RI' || owner.interestType === 'Unleased') ? parseFloat(owner.mineralInterest) : '',
+                            parseFloat(owner.calculated.tractWI),
+                            parseFloat(owner.calculated.tractNRI),
+                            parseFloat(formatInterest(owner.calculated.unitWI)),
+                            parseFloat(formatInterest(owner.calculated.unitNRI))
+                        ]);
                     });
+
                     worksheetData.push(['', '', '', '', '', 'Tract WI Total:', parseFloat(tract.subtotals.tractWI), 'Tract NRI Total:', parseFloat(tract.subtotals.tractNRI)]);
                     worksheetData.push([]);
                 });
+
                 worksheetData.push([]);
                 worksheetData.push(['Unit-Level Owner Totals']);
                 worksheetData.push(['Owner', 'Total Unit WI', 'Total Unit NRI', 'NRI from WI', 'NRI from RI', 'NRI from ORRI', 'NRI from NPRI']);
@@ -556,15 +724,19 @@
                 });
                 const summary = calculatedData.totals.summary;
                 worksheetData.push(['Totals:', parseFloat(summary.totalWI), parseFloat(summary.totalNRI), parseFloat(summary.nriFromWI), parseFloat(summary.nriFromRI), parseFloat(summary.nriFromORRI), parseFloat(summary.nriFromNPRI)]);
+
+
                 const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
                 XLSX.utils.book_append_sheet(workbook, worksheet, 'DOI Calculation');
                 const safeProjectName = projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
                 XLSX.writeFile(workbook, `${safeProjectName}_export.xlsx`);
+                
             }, [calculatedData, activeProject]);
             
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
-                if (!file || !db || !user) return;
+                if (!file || !db || !userId) return;
+
                 const reader = new FileReader();
                 reader.onload = async (e) => {
                     const data = e.target.result;
@@ -572,81 +744,213 @@
                     const sheetName = workbook.SheetNames[0];
                     const worksheet = workbook.Sheets[sheetName];
                     const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
                     try {
                         const newProject = createNewProject();
                         newProject.projectName = json[0][0] || 'Imported Project';
                         newProject.unitAcresOverride = parseFloat(json[1][1]) || null;
                         newProject.tracts = [];
+
                         let currentTract = null;
+
                         for (let i = 4; i < json.length; i++) {
                             const row = json[i];
                             if (row[0] && row[0].toString().startsWith('Tract:')) {
                                 if (currentTract) newProject.tracts.push(currentTract);
-                                currentTract = { id: generateId(), name: row[0].toString().replace('Tract: ', '').trim(), grossAcres: parseFloat(row[1].toString().replace('Gross Acres: ', '')) || 0, isExpanded: true, owners: [] };
+                                currentTract = {
+                                    id: generateId(),
+                                    name: row[0].toString().replace('Tract: ', '').trim(),
+                                    grossAcres: parseFloat(row[1].toString().replace('Gross Acres: ', '')) || 0,
+                                    isExpanded: true,
+                                    owners: []
+                                };
                             } else if (currentTract && row[0] && !row[0].toString().startsWith('Tract:') && row[0] !== 'Owner' && row[0] !== 'Unit-Level Owner Totals' && row[0] !== 'Totals:') {
                                 if(row.length > 1) { 
-                                    currentTract.owners.push({ id: generateId(), name: row[0] || '', interestType: row[1] || 'WI', burdenGroup: row[2] || '', interest: parseFloat(row[3]) || 0, mineralInterest: parseFloat(row[4]) || 0 });
+                                    currentTract.owners.push({
+                                        id: generateId(),
+                                        name: row[0] || '',
+                                        interestType: row[1] || 'WI',
+                                        burdenGroup: row[2] || '',
+                                        interest: parseFloat(row[3]) || 0,
+                                        mineralInterest: parseFloat(row[4]) || 0,
+                                    });
                                 }
                             }
                         }
                         if (currentTract) newProject.tracts.push(currentTract);
+
                         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                        const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/projects/${newProject.id}`);
+                        const projectRef = window.firebase.doc(db, `artifacts/${appId}/users/${userId}/projects/${newProject.id}`);
                         await window.firebase.setDoc(projectRef, newProject);
                         setActiveProjectId(newProject.id);
+
                     } catch (err) {
                         console.error("Failed to parse XLSX file:", err);
                         alert("Could not import the file. Please ensure it is a valid XLSX file exported from this tool.");
                     }
                 };
                 reader.readAsBinaryString(file);
-                event.target.value = '';
+                event.target.value = ''; // Reset file input
             };
 
 
-            // --- Render Logic ---
-            if (isLoading || !auth) {
-                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Initializing Application...</p></div>;
+            // --- Render ---
+            if (isLoading) {
+                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Loading Database...</p></div>;
             }
-            if (!user) {
-                return <AuthComponent auth={auth} />;
-            }
+            
             if (!activeProject) {
-                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Loading projects...</p></div>;
+                return (
+                    <div className="bg-slate-50 min-h-screen flex items-center justify-center">
+                        <div className="text-center">
+                            <p className="mb-4">No projects found. Create your first project to begin.</p>
+                            <button onClick={handleNewProject} className="flex items-center justify-center gap-2 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600">
+                                <PlusCircleIcon /> Create New Project
+                            </button>
+                        </div>
+                    </div>
+                );
             }
 
             const isUnitAcresManual = activeProject.unitAcresOverride !== null;
 
             return (
                 <div className="bg-slate-50 h-screen flex flex-col font-sans text-slate-800">
-                    {isProjectsModalOpen && (<div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={() => setIsProjectsModalOpen(false)}><div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}><div className="p-4 border-b"><h2 className="text-xl font-bold">Manage Projects</h2></div><div className="p-4 max-h-96 overflow-y-auto">{Object.values(projects).map(proj => (<div key={proj.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-100"><span className="font-medium">{proj.projectName}</span><div className="flex items-center gap-2"><button onClick={() => handleLoadProject(proj.id)} className="text-sm bg-blue-500 text-white py-1 px-3 rounded-md hover:bg-blue-600">Load</button><button onClick={() => handleDuplicateProject(proj.id)} className="text-sm bg-gray-500 text-white py-1 px-3 rounded-md hover:bg-gray-600"><CopyIcon size={14} /></button><button onClick={() => handleDeleteProject(proj.id)} className="text-slate-400 hover:text-red-600"><Trash2Icon /></button></div></div>))}</div><div className="p-4 border-t"><button onClick={() => handleNewProject()} className="w-full flex items-center justify-center gap-2 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600"><PlusCircleIcon /> Create New Project</button></div></div></div>)}
-                    {pasteModalInfo.isOpen && (<PasteDataModal tract={activeProject.tracts.find(t => t.id === pasteModalInfo.tractId)} onPaste={handlePasteData} onClose={() => setPasteModalInfo({isOpen: false, tractId: null})} />)}
+                    {isProjectsModalOpen && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center" onClick={() => setIsProjectsModalOpen(false)}>
+                            <div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+                                <div className="p-4 border-b">
+                                    <h2 className="text-xl font-bold">Manage Projects</h2>
+                                </div>
+                                <div className="p-4 max-h-96 overflow-y-auto">
+                                    {Object.values(projects).map(proj => (
+                                        <div key={proj.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-100">
+                                            <span className="font-medium">{proj.projectName}</span>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => handleLoadProject(proj.id)} className="text-sm bg-blue-500 text-white py-1 px-3 rounded-md hover:bg-blue-600">Load</button>
+                                                <button onClick={() => handleDuplicateProject(proj.id)} className="text-sm bg-gray-500 text-white py-1 px-3 rounded-md hover:bg-gray-600"><CopyIcon size={14} /></button>
+                                                <button onClick={() => handleDeleteProject(proj.id)} className="text-slate-400 hover:text-red-600"><Trash2Icon /></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-4 border-t">
+                                    <button onClick={handleNewProject} className="w-full flex items-center justify-center gap-2 bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600">
+                                        <PlusCircleIcon /> Create New Project
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {pasteModalInfo.isOpen && (
+                        <PasteDataModal 
+                            tract={activeProject.tracts.find(t => t.id === pasteModalInfo.tractId)} 
+                            onPaste={handlePasteData} 
+                            onClose={() => setPasteModalInfo({isOpen: false, tractId: null})} 
+                        />
+                    )}
                     
                     <div className="max-w-full mx-auto w-full flex flex-col h-full">
                         <div className="p-4 sm:p-6 lg:p-8 flex-shrink-0">
                             <header className="mb-6 flex justify-between items-center">
-                                <input type="text" value={activeProject.projectName} onChange={(e) => setProjectName(e.target.value)} className="text-3xl font-bold text-slate-900 bg-transparent w-full p-1 -ml-1 focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-lg" placeholder="Enter Project Name"/>
-                                <div className="flex items-center gap-4">
-                                    <button onClick={() => setIsProjectsModalOpen(true)} className="flex items-center gap-2 bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg shadow-sm border border-slate-300 hover:bg-slate-50 transition-all"><FolderIcon /> Projects</button>
-                                    <button onClick={() => window.firebase.signOut(auth)} className="flex items-center gap-2 bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg shadow-sm border border-slate-300 hover:bg-slate-50 transition-all"><LogOutIcon /> Log Out</button>
-                                </div>
+                                <input 
+                                    type="text"
+                                    value={activeProject.projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    className="text-3xl font-bold text-slate-900 bg-transparent w-full p-1 -ml-1 focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-lg"
+                                    placeholder="Enter Project Name"
+                                />
+                                <button onClick={() => setIsProjectsModalOpen(true)} className="flex items-center gap-2 bg-white text-slate-700 font-semibold py-2 px-4 rounded-lg shadow-sm border border-slate-300 hover:bg-slate-50 transition-all">
+                                    <FolderIcon /> Projects
+                                </button>
                             </header>
                             <p className="text-slate-600 mt-1 -mt-5 mb-5">Enter tracts, burden groups, and ownership to calculate the final DOI.</p>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6"><div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200"><label className="block text-sm font-medium text-slate-700 mb-1">Total Spacing Unit Acres</label><div className="flex items-center gap-2"><input type="number" value={isUnitAcresManual ? activeProject.unitAcresOverride : calculatedData.totals.unitAcres} onChange={(e) => setUnitAcresOverride(e.target.value)} disabled={!isUnitAcresManual} className="font-mono text-2xl font-semibold text-slate-900 w-full bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-md p-1 disabled:bg-slate-50" /><button onClick={toggleUnitAcresMode} className="p-2 rounded-md hover:bg-slate-200 text-slate-500">{isUnitAcresManual ? <UnlockIcon /> : <LockIcon />}</button></div></div><div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center"><div className="text-center"><p className="text-sm text-slate-500">Total Unit WI</p><p className={`font-mono text-2xl font-semibold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</p></div></div><div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center"><div className="text-center"><p className="text-sm text-slate-500">Total Unit NRI</p><p className={`font-mono text-2xl font-semibold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.unitNRI}</p></div></div></div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Total Spacing Unit Acres</label>
+                                    <div className="flex items-center gap-2">
+                                        <input type="number" value={isUnitAcresManual ? activeProject.unitAcresOverride : calculatedData.totals.unitAcres} 
+                                               onChange={(e) => setUnitAcresOverride(e.target.value)}
+                                               disabled={!isUnitAcresManual}
+                                               className="font-mono text-2xl font-semibold text-slate-900 w-full bg-transparent focus:bg-white focus:ring-1 focus:ring-blue-500 rounded-md p-1 disabled:bg-slate-50" />
+                                        <button onClick={toggleUnitAcresMode} className="p-2 rounded-md hover:bg-slate-200 text-slate-500">
+                                            {isUnitAcresManual ? <UnlockIcon /> : <LockIcon />}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
+                                     <div className="text-center">
+                                         <p className="text-sm text-slate-500">Total Unit WI</p>
+                                         <p className={`font-mono text-2xl font-semibold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</p>
+                                     </div>
+                                </div>
+                                <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex items-center justify-center">
+                                     <div className="text-center">
+                                         <p className="text-sm text-slate-500">Total Unit NRI</p>
+                                         <p className={`font-mono text-2xl font-semibold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.unitNRI}</p>
+                                     </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="flex-grow overflow-auto px-4 sm:px-6 lg:px-8">
                             <div className="bg-white rounded-lg shadow-sm border border-slate-200">
-                                <div className="min-w-[1200px] sticky top-0 z-10"><div className="grid grid-cols-12 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200"><div className="col-span-2">Owner</div><div className="col-span-1">Interest Type</div><div className="col-span-1">Burden Group</div><div className="col-span-1 text-right">Interest</div><div className="col-span-1 text-right">Mineral %</div><div className="col-span-1 text-right">Tract WI</div><div className="col-span-1 text-right">Tract NRI</div><div className="col-span-2 text-right">Unit WI</div><div className="col-span-2 text-right">Unit NRI</div></div></div>
-                                <div className="min-w-[1200px]">{calculatedData.tracts.map(tract => (<TractComponent key={tract.id} tract={tract} onUpdateTract={updateTract} onToggleTract={toggleTract} onRemoveTract={removeTract} onDuplicateTract={duplicateTract} onUpdateOwner={updateOwner} onAddOwner={addOwner} onRemoveOwner={removeOwner} onOpenPasteModal={() => setPasteModalInfo({isOpen: true, tractId: tract.id})} />))}</div>
+                                <div className="min-w-[1200px] sticky top-0 z-10">
+                                    <div className="grid grid-cols-12 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
+                                        <div className="col-span-2">Owner</div>
+                                        <div className="col-span-1">Interest Type</div>
+                                        <div className="col-span-1">Burden Group</div>
+                                        <div className="col-span-1 text-right">Interest</div>
+                                        <div className="col-span-1 text-right">Mineral %</div>
+                                        <div className="col-span-1 text-right">Tract WI</div>
+                                        <div className="col-span-1 text-right">Tract NRI</div>
+                                        <div className="col-span-2 text-right">Unit WI</div>
+                                        <div className="col-span-2 text-right">Unit NRI</div>
+                                    </div>
+                                </div>
+                                <div className="min-w-[1200px]">
+                                    {calculatedData.tracts.map(tract => (
+                                        <TractComponent key={tract.id} tract={tract} onUpdateTract={updateTract} onToggleTract={toggleTract} onRemoveTract={removeTract} onDuplicateTract={duplicateTract} onUpdateOwner={updateOwner} onAddOwner={addOwner} onRemoveOwner={removeOwner} onOpenPasteModal={() => setPasteModalInfo({isOpen: true, tractId: tract.id})} />
+                                    ))}
+                                </div>
                             </div>
+
                              <div className="mt-8">
                                  <h2 className="text-2xl font-bold text-slate-800 mb-4">Unit-Level Owner Totals</h2>
                                  <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
                                      <div className="min-w-[1400px]">
-                                        <div className="sticky top-0 z-10"><div className="grid grid-cols-7 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200"><div className="col-span-1">Owner</div><div className="col-span-1 text-right">Total Unit WI</div><div className="col-span-1 text-right">Total Unit NRI</div><div className="col-span-1 text-right">NRI from WI</div><div className="col-span-1 text-right">NRI from RI</div><div className="col-span-1 text-right">NRI from ORRI</div><div className="col-span-1 text-right">NRI from NPRI</div></div></div>
-                                         {calculatedData.ownerTotals.map(ownerTotal => (<div key={ownerTotal.name} className="grid grid-cols-7 gap-4 p-3 items-center border-t border-slate-100"><div className="col-span-1 font-medium text-slate-900">{ownerTotal.name}</div><div className="col-span-1 font-mono text-sm text-right text-blue-600">{ownerTotal.totalWI}</div><div className="col-span-1 font-mono text-sm text-right font-semibold text-teal-700">{ownerTotal.totalNRI}</div><div className="col-span-1 font-mono text-sm text-right text-slate-500">{ownerTotal.nriFromWI}</div><div className="col-span-1 font-mono text-sm text-right text-purple-600">{ownerTotal.nriFromRI}</div><div className="col-span-1 font-mono text-sm text-right text-orange-600">{ownerTotal.nriFromORRI}</div><div className="col-span-1 font-mono text-sm text-right text-red-600">{ownerTotal.nriFromNPRI}</div></div>))}
-                                          <div className="grid grid-cols-7 gap-4 p-3 items-center border-t-2 border-slate-200 bg-slate-50"><div className="col-span-1 font-bold text-slate-700">Totals:</div><div className={`col-span-1 font-mono text-sm text-right font-bold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</div><div className={`col-span-1 font-mono text-sm text-right font-bold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalNRI}</div><div className="col-span-1 font-mono text-sm text-right font-bold text-slate-500">{calculatedData.totals.summary.nriFromWI}</div><div className="col-span-1 font-mono text-sm text-right font-bold text-purple-600">{calculatedData.totals.summary.nriFromRI}</div><div className="col-span-1 font-mono text-sm text-right font-bold text-orange-600">{calculatedData.totals.summary.nriFromORRI}</div><div className="col-span-1 font-mono text-sm text-right font-bold text-red-600">{calculatedData.totals.summary.nriFromNPRI}</div></div>
+                                        <div className="sticky top-0 z-10">
+                                             <div className="grid grid-cols-7 gap-4 p-4 bg-slate-100 text-xs font-semibold uppercase text-slate-600 border-b border-slate-200">
+                                                 <div className="col-span-1">Owner</div>
+                                                 <div className="col-span-1 text-right">Total Unit WI</div>
+                                                 <div className="col-span-1 text-right">Total Unit NRI</div>
+                                                 <div className="col-span-1 text-right">NRI from WI</div>
+                                                 <div className="col-span-1 text-right">NRI from RI</div>
+                                                 <div className="col-span-1 text-right">NRI from ORRI</div>
+                                                 <div className="col-span-1 text-right">NRI from NPRI</div>
+                                             </div>
+                                        </div>
+                                         {calculatedData.ownerTotals.map(ownerTotal => (
+                                             <div key={ownerTotal.name} className="grid grid-cols-7 gap-4 p-3 items-center border-t border-slate-100">
+                                                 <div className="col-span-1 font-medium text-slate-900">{ownerTotal.name}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-blue-600">{ownerTotal.totalWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right font-semibold text-teal-700">{ownerTotal.totalNRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-slate-500">{ownerTotal.nriFromWI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-purple-600">{ownerTotal.nriFromRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-orange-600">{ownerTotal.nriFromORRI}</div>
+                                                 <div className="col-span-1 font-mono text-sm text-right text-red-600">{ownerTotal.nriFromNPRI}</div>
+                                             </div>
+                                         ))}
+                                          <div className="grid grid-cols-7 gap-4 p-3 items-center border-t-2 border-slate-200 bg-slate-50">
+                                             <div className="col-span-1 font-bold text-slate-700">Totals:</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold text-blue-600 ${!calculatedData.totals.isWIBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalWI}</div>
+                                             <div className={`col-span-1 font-mono text-sm text-right font-bold text-teal-700 ${!calculatedData.totals.isBalanced && 'text-amber-600'}`}>{calculatedData.totals.summary.totalNRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-slate-500">{calculatedData.totals.summary.nriFromWI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-purple-600">{calculatedData.totals.summary.nriFromRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-orange-600">{calculatedData.totals.summary.nriFromORRI}</div>
+                                             <div className="col-span-1 font-mono text-sm text-right font-bold text-red-600">{calculatedData.totals.summary.nriFromNPRI}</div>
+                                         </div>
                                      </div>
                                  </div>
                              </div>
@@ -654,10 +958,16 @@
                     </div>
                     <div className="p-4 sm:px-6 lg:px-8 flex-shrink-0 border-t border-slate-200 mt-4">
                          <div className="flex flex-col sm:flex-row gap-4">
-                             <button onClick={addTract} className="flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-all duration-200 w-full sm:w-auto"><PlusCircleIcon /> Add Tract</button>
-                             <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 bg-teal-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-teal-700 transition-all duration-200 w-full sm:w-auto"><FileUpIcon /> Import from XLSX</button>
+                             <button onClick={addTract} className="flex items-center justify-center gap-2 bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-all duration-200 w-full sm:w-auto">
+                                 <PlusCircleIcon /> Add Tract
+                             </button>
+                             <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center gap-2 bg-teal-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-teal-700 transition-all duration-200 w-full sm:w-auto">
+                                 <FileUpIcon /> Import from XLSX
+                             </button>
                              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
-                             <button onClick={exportToXLSX} className="flex items-center justify-center gap-2 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all duration-200 w-full sm:w-auto"><FileDownIcon /> Export to XLSX</button>
+                             <button onClick={exportToXLSX} className="flex items-center justify-center gap-2 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all duration-200 w-full sm:w-auto">
+                                 <FileDownIcon /> Export to XLSX
+                             </button>
                          </div>
                     </div>
                 </div>
