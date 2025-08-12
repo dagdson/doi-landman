@@ -22,7 +22,9 @@
             onAuthStateChanged,
             createUserWithEmailAndPassword,
             signInWithEmailAndPassword,
-            signOut
+            signOut,
+            setPersistence, // <-- ADDED FOR SESSION STORAGE
+            browserSessionPersistence // <-- ADDED FOR SESSION STORAGE
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, 
@@ -41,6 +43,8 @@
             createUserWithEmailAndPassword,
             signInWithEmailAndPassword,
             signOut,
+            setPersistence, // <-- ADDED FOR SESSION STORAGE
+            browserSessionPersistence, // <-- ADDED FOR SESSION STORAGE
             getFirestore,
             doc,
             setDoc,
@@ -184,11 +188,15 @@
                 const authInstance = window.firebase.getAuth(app);
                 const dbInstance = window.firebase.getFirestore(app);
 
-                setAuth(authInstance);
-                setDb(dbInstance);
-
+                window.firebase.setPersistence(authInstance, window.firebase.browserSessionPersistence)
+                    .catch((error) => {
+                        console.error("Error setting auth persistence:", error);
+                    });
+                
                 const unsubscribe = window.firebase.onAuthStateChanged(authInstance, (user) => {
                     setUser(user);
+                    setAuth(authInstance);
+                    setDb(dbInstance);
                     setIsLoading(false);
                 });
 
@@ -597,8 +605,8 @@
 
 
             // --- Render Logic ---
-            if (isLoading) {
-                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Authenticating...</p></div>;
+            if (isLoading || !auth) {
+                return <div className="bg-slate-50 min-h-screen flex items-center justify-center"><p>Initializing Application...</p></div>;
             }
             if (!user) {
                 return <AuthComponent auth={auth} />;
