@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Landman Calc">
+    <title>Oil &amp; Gas Landman Calculator</title>
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #f1f5f9;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --accent: #2563eb;
+            --green: #16a34a;
+            --red: #dc2626;
+            --blue: #2563eb;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            min-height: 100dvh;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 16px;
+            padding-top: env(safe-area-inset-top, 16px);
+            padding-bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .section-label {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        .input-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .input-label {
+            display: block;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .input-row input {
+            flex: 1;
+            font-size: 17px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #f8fafc;
+            color: var(--text);
+            font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            width: 100%;
+        }
+
+        .input-row input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+            background: var(--card);
+        }
+
+        .input-row input.invalid {
+            border-color: var(--red);
+            box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+        }
+
+        .status-icon {
+            font-size: 18px;
+            width: 24px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .result-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .result-row:last-child {
+            border-bottom: none;
+        }
+
+        .result-label {
+            font-size: 15px;
+            color: var(--text-secondary);
+        }
+
+        .result-value {
+            font-family: 'SF Mono', 'Menlo', 'Courier New', monospace;
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .result-value.currency {
+            color: var(--green);
+        }
+
+        .result-value.nri {
+            color: var(--blue);
+        }
+
+        .result-value.placeholder {
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        .formulas {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.8;
+            padding-top: 4px;
+        }
+
+        .clear-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--red);
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: background 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .clear-btn:active {
+            background: #fef2f2;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Landman Calculator</h1>
+        <p class="subtitle">Oil &amp; Gas Fractional Ownership</p>
+
+        <!-- Input Section -->
+        <div class="section-label">Ownership Inputs</div>
+        <div class="card">
+            <div class="input-group">
+                <label class="input-label" for="grossAcres">Gross Acres</label>
+                <div class="input-row">
+                    <input type="text" id="grossAcres" inputmode="decimal" placeholder="e.g. 640 or 320.5" autocomplete="off" autocorrect="off" spellcheck="false">
+                    <span class="status-icon" id="grossAcresStatus"></span>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label" for="mineralInterest">Mineral Interest (MI)</label>
+                <div class="input-row">
+                    <input type="text" id="mineralInterest" inputmode="text" placeholder="e.g. 0.5 or 1/2" autocomplete="off" autocorrect="off" spellcheck="false">
+                    <span class="status-icon" id="mineralInterestStatus"></span>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label" for="royaltyRate">Royalty Rate</label>
+                <div class="input-row">
+                    <input type="text" id="royaltyRate" inputmode="text" placeholder="e.g. 3/16 or 0.1875" autocomplete="off" autocorrect="off" spellcheck="false">
+                    <span class="status-icon" id="royaltyRateStatus"></span>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label" for="bonusPerAcre">Bonus per Acre</label>
+                <div class="input-row">
+                    <input type="text" id="bonusPerAcre" inputmode="decimal" placeholder="e.g. 500 or 1250.00" autocomplete="off" autocorrect="off" spellcheck="false">
+                    <span class="status-icon" id="bonusPerAcreStatus"></span>
+                </div>
+            </div>
+        </div>
+
+        <p class="hint">Fractions (e.g. 3/16) and decimals (e.g. 0.1875) are both accepted.</p>
+
+        <!-- Results Section -->
+        <div class="section-label" style="margin-top: 24px;">Calculated Results</div>
+        <div class="card">
+            <div class="result-row">
+                <span class="result-label">Net Acres</span>
+                <span class="result-value" id="netAcresResult">-</span>
+            </div>
+            <div class="result-row">
+                <span class="result-label">Total Bonus</span>
+                <span class="result-value currency" id="totalBonusResult">-</span>
+            </div>
+            <div class="result-row">
+                <span class="result-label">Net Revenue Interest</span>
+                <span class="result-value nri" id="nriResult">-</span>
+            </div>
+        </div>
+
+        <div class="formulas">
+            Net Acres = Gross Acres &times; MI<br>
+            Total Bonus = Net Acres &times; Bonus/Acre<br>
+            NRI = MI &times; Royalty Rate
+        </div>
+
+        <!-- Clear Button -->
+        <button class="clear-btn" id="clearBtn" style="margin-top: 24px;">
+            &#128465; Clear All Fields
+        </button>
+    </div>
+
+    <script>
+        // --- Fraction & Decimal Parser ---
+        function parseNumericInput(input) {
+            var trimmed = input.trim();
+            if (trimmed === '') return null;
+
+            if (trimmed.indexOf('/') !== -1) {
+                var parts = trimmed.split('/');
+                if (parts.length !== 2) return null;
+                var numerator = parseFloat(parts[0].trim());
+                var denominator = parseFloat(parts[1].trim());
+                if (isNaN(numerator) || isNaN(denominator) || denominator === 0) return null;
+                return numerator / denominator;
+            }
+
+            var result = parseFloat(trimmed);
+            if (isNaN(result)) return null;
+            return result;
+        }
+
+        // --- Currency Formatter ---
+        var currencyFormatter = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+
+        // --- DOM References ---
+        var inputs = {
+            grossAcres: document.getElementById('grossAcres'),
+            mineralInterest: document.getElementById('mineralInterest'),
+            royaltyRate: document.getElementById('royaltyRate'),
+            bonusPerAcre: document.getElementById('bonusPerAcre')
+        };
+
+        var statuses = {
+            grossAcres: document.getElementById('grossAcresStatus'),
+            mineralInterest: document.getElementById('mineralInterestStatus'),
+            royaltyRate: document.getElementById('royaltyRateStatus'),
+            bonusPerAcre: document.getElementById('bonusPerAcreStatus')
+        };
+
+        var results = {
+            netAcres: document.getElementById('netAcresResult'),
+            totalBonus: document.getElementById('totalBonusResult'),
+            nri: document.getElementById('nriResult')
+        };
+
+        // --- Calculation Engine ---
+        function calculate() {
+            var ga = parseNumericInput(inputs.grossAcres.value);
+            var mi = parseNumericInput(inputs.mineralInterest.value);
+            var rr = parseNumericInput(inputs.royaltyRate.value);
+            var bpa = parseNumericInput(inputs.bonusPerAcre.value);
+
+            // Update validation indicators
+            updateStatus('grossAcres', inputs.grossAcres.value, ga);
+            updateStatus('mineralInterest', inputs.mineralInterest.value, mi);
+            updateStatus('royaltyRate', inputs.royaltyRate.value, rr);
+            updateStatus('bonusPerAcre', inputs.bonusPerAcre.value, bpa);
+
+            // Net Acres = Gross Acres * MI
+            if (ga !== null && mi !== null) {
+                var netAcres = ga * mi;
+                results.netAcres.textContent = netAcres.toFixed(8);
+                results.netAcres.classList.remove('placeholder');
+            } else {
+                results.netAcres.textContent = '-';
+                results.netAcres.classList.add('placeholder');
+            }
+
+            // Total Bonus = Net Acres * Bonus per Acre
+            if (ga !== null && mi !== null && bpa !== null) {
+                var totalBonus = (ga * mi) * bpa;
+                results.totalBonus.textContent = currencyFormatter.format(totalBonus);
+                results.totalBonus.classList.remove('placeholder');
+            } else {
+                results.totalBonus.textContent = '-';
+                results.totalBonus.classList.add('placeholder');
+            }
+
+            // NRI = MI * Royalty Rate
+            if (mi !== null && rr !== null) {
+                var nri = mi * rr;
+                results.nri.textContent = nri.toFixed(8);
+                results.nri.classList.remove('placeholder');
+            } else {
+                results.nri.textContent = '-';
+                results.nri.classList.add('placeholder');
+            }
+        }
+
+        function updateStatus(field, rawValue, parsedValue) {
+            var statusEl = statuses[field];
+            var inputEl = inputs[field];
+
+            if (rawValue.trim() === '') {
+                statusEl.textContent = '';
+                inputEl.classList.remove('invalid');
+            } else if (parsedValue !== null) {
+                statusEl.textContent = '\u2705';
+                inputEl.classList.remove('invalid');
+            } else {
+                statusEl.textContent = '\u26A0\uFE0F';
+                inputEl.classList.add('invalid');
+            }
+        }
+
+        // --- Event Listeners ---
+        Object.keys(inputs).forEach(function(key) {
+            inputs[key].addEventListener('input', calculate);
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', function() {
+            Object.keys(inputs).forEach(function(key) {
+                inputs[key].value = '';
+            });
+            calculate();
+        });
+
+        // Initialize
+        calculate();
+    </script>
+</body>
+</html>
